@@ -1152,7 +1152,7 @@ class TISC(ocpci.Device):
 
     def __init__(self, path="/sys/class/uio/uio0"):
         ocpci.Device.__init__(self, path, 2*1024*1024)
-        self.spi = SPI(self, self.map['spi_base'])
+        self.spi = spi.SPI(self, self.map['spi_base'])
         self.GA = GLITC(self, self.map['GA'])
         self.GB = GLITC(self, self.map['GB'])
         self.GC = GLITC(self, self.map['GC'])
