@@ -2,9 +2,46 @@ import ocpci
 import struct
 import sys
 import time
-from bf import *
-import spi
 
+#
+# Bitfield manipulation. Note that ordering
+# can be Python (smallest first) or Verilog
+# (largest first) for easy compatibility
+#
+
+class bf(object):
+    def __init__(self, value=0):
+        self._d = int(value)
+    
+    def __getitem__(self, index):
+        return (self._d >> index) & 1
+    
+    def __setitem__(self,index,value):
+        value = (value & 1L)<<index
+        mask = (1L)<<index
+        self._d = (self._d & ~mask) | value
+    
+    def __getslice__(self, start, end):
+        if start > end:
+            tmp = end
+            end = start
+            start = tmp
+        mask = (((1L)<<(end+1))-1) >> start
+        return (self._d >> start) & mask
+    
+    def __setslice__(self, start, end, value):
+        if start > end:
+            tmp = end
+            end = start
+            start = tmp
+        mask = (((1L)<<(end+1))-1) >> start
+        value = (value & mask) << start
+        mask = mask << start
+        self._d = (self._d & ~mask) | value
+        return (self._d >> start) & mask
+    
+    def __int__(self):
+        return self._d
 
 class PicoBlaze:
     instr0_map = { (0x00>>1) : "LOAD",
@@ -139,17 +176,14 @@ class GLITC:
             'DPTRAINING'     : 0x000088,
             'DPCOUNTER'      : 0x00008C,
             'DPIDELAY'       : 0x000090,
+            'DPSCALER'		 : 0x000094,
             'RDINPUT'        : 0x000100,
             'RDCTRL'         : 0x000104,
             'settings_dac'   : 0x000140,
             'settings_atten' : 0x000160,
             'settings_sc'    : 0x000178,
             'settings_pb'    : 0x00017C,
-            'phasescan_pb'   : 0x000058,
-            'GICTRL0'        : 0x000180,
-            'GICTRL1'        : 0x000184,
-            'GITRAIN'        : 0x000188,
-            'GIDELAY'        : 0x00018C}
+            'phasescan_pb'   : 0x000058}
             
     def __init__(self, dev, base):
         self.dev = dev
@@ -184,7 +218,9 @@ class GLITC:
         ctrl = bf(self.read(self.map['DPTRAINING']))
         print "Training status (%8.8x): Training is %s" % (int(ctrl)&0xFFFFFFFF, "off" if ctrl[31] else "on")
         print "                          : Training is in %s view" % ("sample" if ctrl[29] else "signal")
-        print "                          : Training latch is %senabled" % ("" if ctrl[28] else "not ")
+        print "                          : Training latch is %senabled" % ("" if ctrl[28] else "not ")	
+	
+	
 
     def datapath_input_ctrl(self, enable):
         val = bf(self.read(self.map['DPCTRL0']))
@@ -252,6 +288,21 @@ class GLITC:
                 val[31] = value
             self.write(self.map['DPCTRL1'], int(val))
             return value
+            
+    def delay_VCDL(self, channel, value = None):
+        if channel > 1:
+            print "Illegal RITC channel (%d)" % channel
+            return None
+        val = bf(self.read(self.map['DPCTRL1']))
+        if channel == 0:
+            val[5] = 1
+            val[4:0] = value
+        else:
+            val[13] = 1
+            val[12:8] = value
+        self.write(self.map['DPCTRL1'], int(val))
+        
+
 
     def counters(self):
         val = bf(0)
@@ -261,6 +312,8 @@ class GLITC:
             time.sleep(0.1)
             v2 = bf(self.read(self.map['DPCOUNTER']))
             print "Channel %d: %d" % (i, v2[15:0])
+            
+    
 
     def train_latch_ctrl(self, en):
         val = bf(self.read(self.map['DPTRAINING']))
@@ -286,6 +339,25 @@ class GLITC:
         self.write(self.map['DPTRAINING'], int(val))
         v2 = bf(self.read(self.map['DPTRAINING']))
         return v2[7:0]
+        
+    def scaler_read(self,channel,sample,num_trials=1,wait=100):
+        val = 0
+        for trail_i in range(num_trials):
+            v = self.train_read(channel, sample, sample_view=1)
+            for i in range(wait):
+                val_temp = bf(self.read(self.map['DPSCALER']))
+                if(val_temp[16]):
+                    val += int(val_temp[15:0])
+                    break
+                
+        val /=(1023.0*num_trials)
+        return val#[15:0]
+        
+    def scaler_read_all(self,channel,num_trials=1,wait=100):
+        value_array = [0]*32
+        for sample_i in range(32):
+            value_array[sample_i] = self.scaler_read(channel,sample_i,num_trials,wait)
+        return value_array
 
     def eye_autotune_all(self):
         for i in (0,1,2,4,5,6):
@@ -296,19 +368,33 @@ class GLITC:
     def eye_autotune(self, channel, bit, verbose=1):
         eyevars = self.eye_scan(channel, bit, verbose)
         if eyevars[0] == 0:
-            print "eye_autotune error: eye start not found (%2.2x %2.2x %2.2x)" % eyevars
-            return -1
-        elif eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65:
+            print "'CA' Eye start not found, checking next eye"
+            VCDL_delay = (eyevars[1]/2)
+            if (channel <= 2 ):
+			    RITC = 0
+            if (channel > 2):
+		        RITC = 1
+            self.delay_VCDL(RITC,int(VCDL_delay))
+            eyevars = self.eye_scan(channel,bit,verbose)
+            if eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
+                print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
+                return -1
+            eyecenter = 2*VCDL_delay - (eyevars[1] - eyevars[0])/2
+            self.delay(channel, bit, int(eyecenter))
+            self.delay_VCDL(RITC,0)
+            eyevars = self.eye_scan(channel, bit, verbose)
+        elif eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
             print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
             return -1
-        eyecenter = (eyevars[1] + eyevars[0])/2
-        self.delay(channel, bit, int(eyecenter))
+        else:
+            eyecenter = (eyevars[1] + eyevars[0])/2
+            self.delay(channel, bit, int(eyecenter))
         bitslip_count = 0
-        if eyevars[2] == 0x2B:
+        if eyevars[2] == 0x2B or eyevars[2] == 0xB2:
             bitslip_count = 2
-        elif eyevars[2] == 0x95:
+        elif eyevars[2] == 0x65 or eyevars[2] == 0x59:
             bitslip_count = 1
-        elif eyevars[2] == 0x65:
+        elif eyevars[2] == 0x95:
             bitslip_count = 3
         if verbose == 1:
             print "eye_autotune: setting to delay %d" % eyecenter
@@ -361,6 +447,7 @@ class GLITC:
         val[22:20] = channel
         val[31] = 1
         self.write(self.map['DPIDELAY'], int(val))
+	    
     
     def bitslip(self, channel, bit):
         val = bf(self.read(self.map['DPTRAINING']))
@@ -388,7 +475,7 @@ class GLITC:
             self.write(self.map['RDCTRL'], 0x1)
             val = bf(self.read(self.map['RDCTRL']))
             while val[1]:
-                print "Loader busy, waiting..."
+                #print "Loader busy, waiting..."
                 val = bf(self.read(self.map['RDCTRL']))
     
     def identify(self):
@@ -414,6 +501,9 @@ class GLITC:
             if value > 2000:
                 print "DAC value is too high (%d)!" % value
                 return None
+            elif value < 0:
+				print "DAC value is too low (%d)!" % value
+				return None
             print "Writing %8.8x to DAC %d" % ( value, channel)
             self.write(self.map['settings_dac'] + channel*4, value)
             return value
@@ -437,6 +527,98 @@ class GLITC:
             value = value & 0x1F
             self.write(self.map['settings_atten'] + channel*4, value)
             return value
+            
+    def reset_all_thresholds(self,RITC,reset_value=4095,wait_time=0.01):
+        # Reset all thresholds to the highest value
+        for i in range(21):
+            time.sleep(0.01)
+            self.rdac(RITC,i,reset_value)
+            
+	def read_all_samples(self, channel,wait_time=0.01):
+	    sample_values = np.zeros(32)	    
+	    for sample_i in range(0,32):
+		    sample_values[sample_i]=self.train_read(channel, sample_i, 1)
+	    return sample_values
+	    
+    def read_all_samples_n(self,channel,num_trials):
+	    sample_values = [0]*32
+	    for sample_i in range(0,32):
+		    for n in range(num_trials):
+			    sample_values[sample_i]+=float(self.train_read(channel, sample_i, 1))
+	    return sample_values
+	    
+    def read_sample_n(self, channel,sample_number,num_trials):
+	    sample_value = 0.0
+	    for n in range(num_trials):
+		    sample_value+=float(self.train_read(channel, sample_number, 1))
+	    sample_value /=float(num_trials)
+	    return sample_value
+
+class SPI:
+    map = { 'SPCR'       : 0x000000,
+            'SPSR'       : 0x000004,
+            'SPDR'       : 0x000008,
+            'SPER'       : 0x00000C }
+    
+    cmd = { 'RES'        : 0xAB ,
+            'RDID'       : 0x9F ,
+            'WREN'       : 0x06 ,
+            'WRDI'       : 0x04 ,
+            'RDSR'       : 0x05 ,
+            'WRSR'       : 0x01 ,
+            'READ'       : 0x03 ,
+            'FASTREAD'   : 0x0B ,
+            'PP'         : 0x02 ,
+            'SE'         : 0xD8 ,
+            'BE'         : 0xC7 }
+    
+    bits = { 'SPIF'      : 0x80,
+             'WCOL'      : 0x40,
+             'WFFULL'    : 0x08,
+             'WFEMPTY'   : 0x04,
+             'RFFULL'    : 0x02,
+             'RFEMPTY'   : 0x01 }
+    
+    def __init__(self, dev, base):
+        self.dev = dev
+        self.base = base
+        val = bf(self.dev.read(self.base + self.map['SPCR']))
+        val[6] = 1;
+        val[3] = 0;
+        val[2] = 0;
+        self.dev.write(self.base + self.map['SPCR'], int(val))
+
+    def command(self, device, command, dummy_bytes, num_read_bytes, data_in = [] ):
+        self.dev.spi_cs(device, 1)
+        self.dev.write(self.base + self.map['SPDR'], command)
+        for dat in data_in:
+            self.dev.write(self.base + self.map['SPDR'], dat)
+        for i in range(dummy_bytes):
+            self.dev.write(self.base + self.map['SPDR'], 0x00)
+        # Empty the read FIFO.
+        while not (self.dev.read(self.base + self.map['SPSR']) & self.bits['RFEMPTY']):
+            self.dev.read(self.base + self.map['SPDR'])
+        rdata = []
+        for i in range(num_read_bytes):
+            self.dev.write(self.base + self.map['SPDR'], 0x00)
+            rdata.append(self.dev.read(self.base + self.map['SPDR']))
+        self.dev.spi_cs(device, 0)    
+        return rdata
+    
+    def identify(self, device=0):
+        res = self.command(device, self.cmd['RES'], 3, 1)
+        print "Electronic Signature: 0x%x" % res[0]
+        res = self.command(device, self.cmd['RDID'], 0, 3)
+        print "Manufacturer ID: 0x%x" % res[0]
+        print "Device ID: 0x%x 0x%x" % (res[1], res[2])
+
+    def read(self, address, length=1, device=0):
+        data_in = []
+        data_in.append((address >> 16) & 0xFF)
+        data_in.append((address >> 8) & 0xFF)
+        data_in.append(address & 0xFF)
+        res = self.command(device, self.cmd['READ'], 0, length, data_in)
+        return res        
         
 class TISC(ocpci.Device):
     map = { 'ident'      : 0x000000,
@@ -460,7 +642,7 @@ class TISC(ocpci.Device):
 
     def __init__(self, path="/sys/class/uio/uio0"):
         ocpci.Device.__init__(self, path, 2*1024*1024)
-        self.spi = spi.SPI(self, self.map['spi_base'])
+        self.spi = SPI(self, self.map['spi_base'])
         self.GA = GLITC(self, self.map['GA'])
         self.GB = GLITC(self, self.map['GB'])
         self.GC = GLITC(self, self.map['GC'])
