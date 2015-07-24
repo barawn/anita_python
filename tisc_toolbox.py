@@ -250,6 +250,146 @@ def find_bit_transition(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,th
 	
 	return input_dac_transition_value,sample_transition_value,sample_number
 
+
+def find_bit_transition_all_samples(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,threshold_label,sample_number,pp,num_trials=10,wait_time=0.01):
+	
+	#RITC,RITC_COMP = get_channel_infor(channel,threshold_label)
+	# Reset values
+	input_width=200
+	input_floor = 500
+	input_ceiling = 1100
+	minimum_input_value = int(transition_value*1200./2500.)-input_width
+	maximum_input_value = int(transition_value*1200./2500.)+input_width
+	initial_input_value = int(transition_value*1200./2500.) #Convert from Threshold voltage to pedestal voltage
+
+	if(minimum_input_value<input_floor):
+		print "Input at the floor"
+		minimum_input_value = input_floor
+		maximum_input_value = input_floor+input_width*2
+		initial_input_value = input_floor+input_width
+	elif(maximum_input_value>input_ceiling):
+		print "Input at the ceiling"
+		maximum_input_value=input_ceiling
+		minimum_input_value=input_ceiling-input_width*2
+		initial_input_value=input_ceiling-input_width
+	
+	previous_input_value_low = minimum_input_value
+	previous_input_value_high = maximum_input_value
+	input_dac_value = initial_input_value
+	
+	sample_value_array = np.zeros(32)
+	sample_counter = 0
+	bad_sample_counter = 0
+	sample_value = 0.0
+	point_found = False
+	no_midpoint_counter = 0
+
+	graph_1_x = []
+	graph_1_y = []
+	
+	
+	print "Starting transition value %1.1d on RITC %1.1d threshold %1.1d" % (transition_value, RITC, threshold_label)
+	# Set  threshold one count below transition point
+	GLITC.rdac(RITC,RITC_COMP,transition_value-1)
+	sleep(wait_time)
+
+	closest_sample_difference = 10000.0
+	# Adjust input voltages to find 50%+-10% point
+	while (point_found != True):
+		sample_value_array = []
+		
+		# Set input voltage
+		GLITC.dac(channel,input_dac_value)
+		sleep(5)
+		print "Setting input to %1.1d (%1.2fmV)" % (input_dac_value, input_dac_value*2500./4095.)
+
+		# Read in values
+		sample_value_array = GLITC.scaler_read_all(channel,num_trials)
+
+		
+		average_sample_value = np.mean(sample_value_array)-threshold_label+1	
+		
+		for sample_i in range(32):
+			sample_value = sample_value_array[sample_i]-threshold_label+1
+			
+			if(abs(sample_value-0.5)<closest_sample_difference):
+				closest_input_dac_value = input_dac_value
+				closest_sample_difference = abs(sample_value-0.5)
+				closest_sample_value = sample_value
+				closest_sample_number = sample_i
+				#print "Closest sample number: %d"% closest_sample_number
+				#print "Closest sample value: %d"% closest_sample_value
+				#print "Closest sample difference: %f"% closest_sample_difference
+				#print "Closest input dac value: %d"%closest_input_dac_value
+				
+		# If point is between 40% and 60%, call it found
+		if (closest_sample_value >= 0.4 and closest_sample_value <= 0.6):
+			input_dac_transition_value = closest_input_dac_value
+			sample_transition_value = closest_sample_value
+			sample_number = closest_sample_number
+			point_found = True
+			print "Sample #%d = %1.2f, Found transition point at %1.1d (%1.2fmV)" % (sample_number,sample_transition_value,input_dac_transition_value, input_dac_transition_value*2500./4095.)
+			break		
+
+		# Input voltage is too low, increase the input dac if point is below 40% 
+		elif(average_sample_value < 0.5 and average_sample_value > 0):
+			previous_input_value_low = input_dac_value
+			input_dac_value = int(input_dac_value+abs(previous_input_value_high-input_dac_value)/4.0)
+			if(input_dac_value >2000):
+				print "Input value out of range!"
+				return None
+			print "Average Sample = %1.2f, input is too low\r" % sample_value
+		
+		# Input voltage is too high, decrease the input dac if point is above 60% 
+		elif(average_sample_value >= 0.5 and average_sample_value < 1.0):
+			previous_input_value_high = input_dac_value
+			input_dac_value = int(input_dac_value-abs(input_dac_value-previous_input_value_low)/4.0)
+			if(input_dac_value < 0):
+				print "Input value out of range!"
+				return None
+			print "Average Sample = %1.2f, input is too high\r" % sample_value
+			
+		# Input voltage is too low, increase the input dac if point is below 40% 
+		elif(average_sample_value < 0.5):
+			previous_input_value_low = input_dac_value
+			input_dac_value = int(input_dac_value+abs(previous_input_value_high-input_dac_value)/2.0)
+			if(input_dac_value >2000):
+				print "Input value out of range!"
+				return None
+			print "Average Sample = %1.2f, input is too low\r" % sample_value
+			
+			
+		# Input voltage is too high, decrease the input dac if point is above 60% 
+		elif(average_sample_value > 0.5):
+			previous_input_value_high = input_dac_value
+			input_dac_value = int(input_dac_value-abs(input_dac_value-previous_input_value_low)/2.0)
+			if(input_dac_value < 0):
+				print "Input value out of range!"
+				return None
+			print "Average Sample = %1.2f, input is too high\r" % sample_value
+			
+		
+		
+		# Narrowed down to a signal input value, but output was never between 0.4 and 0.6
+		if(input_dac_value == previous_input_value_high or input_dac_value == previous_input_value_low and point_found != True):
+			if(closest_input_dac_value!=800):
+				print "Setting input to %1.1d (%1.2fmV)" % (closest_input_dac_value, closest_input_dac_value*2500./4095.)
+				GLITC.dac(channel,closest_input_dac_value)
+				sleep(5)
+		
+			input_dac_transition_value = closest_input_dac_value
+			sample_number = closest_sample_number
+			sample_transition_value = closest_sample_value
+			
+			point_found = True
+			print "Transition too sharp, using closest input DAC value and sample number"
+			print "Sample # %d = %1.2f, Found transition point at %1.1d (%1.2fmV)" % (sample_number,sample_transition_value,input_dac_transition_value, input_dac_transition_value*2500./4095.)
+			
+		
+	#make_scatter_plot(pp,graph_1_x,graph_1_y,GLITC_n,channel,threshold_label,transition_value,input_dac_transition_value,0,sample_number,0)
+	
+	return input_dac_transition_value,sample_transition_value,sample_number
+
 							  	
 def make_scatter_plot(pp,x,y,GLITC_n,channel,threshold_label,transition_value,pedestal,offset,sample_number,flag):
 	plt.figure(figsize=(16,12))	
@@ -275,7 +415,7 @@ def make_scatter_plot(pp,x,y,GLITC_n,channel,threshold_label,transition_value,pe
 		#plt.axis([transition_value-150,transition_value+150,threshold_label-1.1,threshold_label+0.1])
 	if(pp!=None):
 		plt.savefig(pp, format='pdf')	
-	#plt.show()
+	plt.show()
 	plt.clf()
 	plt.close()
 	
@@ -1127,5 +1267,39 @@ def threshold_scan_all_samples(GLITC,GLITC_n,channel,threshold_label,num_trials=
 
 
 	sample_array = np.transpose(sample_array)
+	
+	return sample_array,threshold_array
+
+
+def manual_offset_scan(GLITC,GLITC_n,channel,threshold_label,transition_value,input_dac,num_trials=100,min_threshold_range=0,max_threshold_range=4095,threshold_step=1,wait_time=0.01):
+
+	colors = iter(cm.brg(np.linspace(0,1,32)))
+	RITC, RITC_COMP = get_channel_info(channel,threshold_label)
+	
+	GLITC.reset_all_thresholds(RITC,0)
+	
+	threshold_level = 7-threshold_label
+	plt.figure(figsize=(16,12))
+	# Set higher threshold to maximum
+	for threshold_level_i in range(0,threshold_level):
+		print "Setting comparator %d to max" % (RITC_COMP-threshold_level_i-1)
+		GLITC.rdac(RITC,RITC_COMP-threshold_level_i-1,4095)
+		
+	print "Setting input DAC to %d"%input_dac
+	GLITC.dac(channel,input_dac)
+	sleep(5)
+	
+	print "Scanning thresholds"
+	sample_array,threshold_array = threshold_scan_all_samples(GLITC,GLITC_n,channel,threshold_label,num_trials,min_threshold_range,max_threshold_range,threshold_step,wait_time)
+	
+	print "Making plots"
+	for sample_i in range(32):
+		#make_scatter_plot(None,threshold_array,sample_array[sample_i],GLITC_n,channel,threshold_label,transition_value,input_dac,0,sample_i,1)
+		plt.plot(threshold_array,sample_array[sample_i],color=next(colors),label=("Sample %d"%sample_i))
+	plt.legend()
+	plt.show()
+	
+	
+	
 	
 	return sample_array,threshold_array
