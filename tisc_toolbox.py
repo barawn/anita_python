@@ -3,6 +3,7 @@ import tisc
 from time import sleep
 import numpy as np
 import TISC_transition_offsets_dictionary as tod
+import TISC_threshold_setting_dictionary as tsd
 import matplotlib.cm as cm
 from matplotlib.backends.backend_pdf import PdfPages
 
@@ -117,7 +118,36 @@ def get_channel_info(channel,threshold_label):
 		RITC_COMP = ((channel-4)*7)+7-threshold_label
 		
 	return RITC, RITC_COMP
+
 	
+def set_thresholds(GLITC,GLITC_n,channel,wait=0.01):
+	
+	
+	
+	sample_array = []
+
+	
+	for thres_i in range(7):
+		threshold_label = 7-thres_i
+		RITC, RITC_COMP = get_channel_info(channel,threshold_label)
+		threshold_value = tsd.get_threshold(10002,GLITC_n,channel,RITC_COMP)
+		print "Setting threshold %d to %d"%(threshold_label,threshold_value)
+		GLITC.rdac(RITC,RITC_COMP,threshold_value)
+		sleep(wait)
+		
+		
+	return 0	
+
+
+def set_higher_thresholds_to_max(GLITC,GLITC_n,channel,threshold_label):
+	threshold_level_i = 7-threshold_label
+	
+	RITC,RITC_COMP = get_channel_info(channel,threshold_label)
+	
+	for threshold_level_ii in range(0,threshold_level_i):
+		print "Setting comparator %d to max" % (RITC_COMP-threshold_level_ii-1)
+		GLITC.rdac(RITC,RITC_COMP-threshold_level_ii-1,4095)
+
 	
 def find_bit_transition(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,threshold_label,sample_number,pp,num_trials=10,wait_time=0.01):
 	
@@ -250,6 +280,15 @@ def find_bit_transition(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,th
 	
 	return input_dac_transition_value,sample_transition_value,sample_number
 
+
+def find_threshold_transition_point(sample_array,threshold_array,threshold_label):
+	transition_point = [0]*32
+	
+	for i in range(len(sample_array[sample_i])):	
+		if(sample_array[sample_i][i]<threshold_label-0.5):
+			transition_point[sample_i] = threshold_array[i]
+			break
+	return transition_point
 
 def find_bit_transition_all_samples(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,threshold_label,sample_number,pp,num_trials=10,wait_time=0.01):
 	
@@ -1010,33 +1049,8 @@ def vdd_scan(GLITC_n,channel,input_dac_transition_value=800,num_scans=4,vdd_min=
 	return 0
 
 
-def input_dac_scan(GLITC_n,channel,threshold=1900,num_scans=1,dac_min=780,dac_max=820,threshold_label=4,sample_number=0,pp=None,num_trials=10,wait_time=0.01):
+def input_dac_scan(GLITC,GLITC_i,channel_i,dac_min=500,dac_max=1000,dac_step = 10,num_trials=10,wait_time=0.01):
 	
-	#dac_min = 780
-	#dac_max = 820
-	
-	RITC, RITC_COMP = get_channel_info(channel,threshold_label)
-	
-	GLITC = setup(GLITC_n)
-	
-	GLITC.reset_all_thresholds(RITC,0)
-	
-	print "RITC COMP: %d" % RITC_COMP
-	print "RITC: %d" % RITC
-	
-	# Set higher threshold to maximum
-	for threshold_level_ii in range(0,7-threshold_label):
-		print "Setting comparator %d to max" % (RITC_COMP-threshold_level_ii-1)
-		GLITC.rdac(RITC,RITC_COMP-threshold_level_ii-1,4095)
-	
-	GLITC.rdac(RITC,RITC_COMP,threshold)
-	sleep(5)
-	
-	colors = iter(cm.brg(np.linspace(0,1,dac_max-dac_min)))
-	plt.figure(figsize=(16,12))	
-		
-	#for scan_i in range(num_scans):
-	#print scan_i
 	sample_value_array = np.zeros(32)
 
 	offset_flag = 0
@@ -1044,20 +1058,18 @@ def input_dac_scan(GLITC_n,channel,threshold=1900,num_scans=1,dac_min=780,dac_ma
 	offset=0
 	input_array = []
 	sample_array = []
-	inside_flag = 0
-	outside_flag = 1
-	midpoint_counter = 0
 
-	for input_i in range(dac_min,dac_max):
+	for input_i in range(dac_min,dac_max+1,dac_step):
 		#print "Setting threshold to %1.1d (%1.2fmV)" % (thres_i, thres_i*1200./4095.)
 		# Step threshold dac value
 		print "Setting input to: %d" % input_i
-		GLITC.dac(channel,input_i)
+		GLITC.dac(channel_i,input_i)
 		sleep(5)
 
-		sample_value = 0.0
+		#sample_value = 0.0
 		# Read in samples and check if it passes the sample transition point
-		sample_value = GLITC.scaler_read(channel,sample_number,num_trials)
+		sample_value = GLITC.scaler_read_all(channel_i,num_trials)
+		"""
 		if(sample_value>=0.4 and sample_value<=0.6 and inside_flag!=1):
 			inside_flag = 1
 			outside_flag = 0
@@ -1066,22 +1078,12 @@ def input_dac_scan(GLITC_n,channel,threshold=1900,num_scans=1,dac_min=780,dac_ma
 			inside_flag = 0
 			outside_flag = 1
 			midpoint_counter+=1
-		
+		"""
 		input_array.append(input_i)
 		sample_array.append(sample_value)
-		
-	plt.plot(input_array,sample_array)#,color=next(colors),label=("Input DAC: %d" % input_i))
-	#make_scatter_plot(pp,threshold_array,sample_array,GLITC_n,channel,threshold_label,transition_value,input_dac_transition_value,0,sample_number,1)	
-	plt.title("GLITC "+str(GLITC_n)+", Ch "+str(channel)+", Threshold "+str(threshold_label)+", Sample Number "+str(sample_number))
-	plt.xlabel("Input Voltage (DAC Counts)")
-	plt.ylabel("Normalized Output Value")
-	plt.legend()
-	plt.text(dac_max-2,threshold_label-0.5, ('Threshold DAC: %1.1d' % threshold), fontsize = 18)
-	#plt.axis([transition_value-150,transition_value+150,2.8,7])
-	#plt.savefig('/home/user/data/GLITC_'+str(GLITC_n)+'/transition_study/G'+str(GLITC_n)+'_CH'+str(channel)+' sample'+str(sample_number)+'_vss_study_4')
-	plt.show()
-	#return threshold_array,sample_array,transition_value_index,midpoint_counter
-	return 0
+	
+	sample_array = np.transpose(sample_array)
+	return sample_array,input_array
 
 
 def board_sample_scan(input_dac_value=800,threshold_label=4,num_trials=10,wait_time=0.01):
@@ -1189,37 +1191,37 @@ def sample_scan(GLITC_n,channel,input_dac_value=800,threshold_label=4,pp=None,nu
 def stitch_threshold_dac(GLITC_n,channel,RITC_DAC_Number,dac):
 	dac_temp = dac
 	"""
-	offset_2048 = 54
-	offset_1024 = 47
-	offset_512 = 18
-	offset_256 = 0
+	offset_2048 = 0#89
+	offset_1024 = 0#41
+	offset_512 = 0#19
+	offset_256 = 0#9
 	offset_128 = 0
 	"""
 	offset_2048,offset_1024,offset_512,offset_256,offset_128 = tod.get_offsets(10002,GLITC_n,channel,RITC_DAC_Number)
-	pre_point_offset = offset_1024+2*offset_512+4*offset_256+8*offset_128
-	if(dac>2047-pre_point_offset):
-		dac+=offset_2048+pre_point_offset
-		dac_temp-=2048+pre_point_offset
+	total_offset = offset_2048+offset_1024+2*offset_512+4*offset_256+8*offset_128
+	if(dac>2047-total_offset):
+		dac+=total_offset
+		dac_temp-=2048+total_offset
 		
-	pre_point_offset = offset_512+2*offset_256+4*offset_128
-	if(dac_temp>1023-pre_point_offset):
-		dac+=offset_1024+pre_point_offset
-		dac_temp-=1024+pre_point_offset
+	total_offset = offset_1024+offset_512+2*offset_256+4*offset_128
+	if(dac_temp>1023-total_offset):
+		dac+=total_offset
+		dac_temp-=1024+total_offset
 	
-	pre_point_offset = offset_256+2*offset_128
-	if(dac_temp>511-pre_point_offset):
-		dac+=offset_512+pre_point_offset
-		dac_temp-=512+pre_point_offset
+	total_offset = offset_512+offset_256+2*offset_128
+	if(dac_temp>511-total_offset):
+		dac+=total_offset
+		dac_temp-=512+total_offset
 	
-	pre_point_offset = offset_128
-	if(dac_temp>255-pre_point_offset):
-		dac+=offset_256+pre_point_offset
-		dac_temp-=256+pre_point_offset
+	total_offset = offset_256+offset_128
+	if(dac_temp>255-total_offset):
+		dac+=total_offset
+		dac_temp-=256+total_offset
 	
-	pre_point_offset = 0
-	if(dac_temp>127-pre_point_offset):
-		dac+=offset_128+pre_point_offset
-		dac_temp-=128+pre_point_offset
+	total_offset = offset_128
+	if(dac_temp>127-total_offset):
+		dac+=total_offset
+		dac_temp-=128+total_offset
 	return dac
 	
 	
@@ -1303,3 +1305,6 @@ def manual_offset_scan(GLITC,GLITC_n,channel,threshold_label,transition_value,in
 	
 	
 	return sample_array,threshold_array
+
+
+
