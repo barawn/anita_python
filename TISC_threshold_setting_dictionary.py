@@ -16,14 +16,27 @@ def get_threshold(TISC_n,GLITC_n,channel,RITC_COMP):
 	# TISC 10002
 	# GLITC 0
 	# Channel 0
-	thresh_dict[(10002,0,0,0)] = 1871#1779
-	thresh_dict[(10002,0,0,1)] = 1816#1709
-	thresh_dict[(10002,0,0,2)] = 1733#1623
-	thresh_dict[(10002,0,0,3)] = 1622#1521
-	thresh_dict[(10002,0,0,4)] = 1482#1403
-	thresh_dict[(10002,0,0,5)] = 1314#1269
-	thresh_dict[(10002,0,0,6)] = 1117#1118
-
+	
+	# Expanded high end, Th4 set to 760
+	#print "setting things"
+	
+	thresh_dict[(10002,0,0,0)] = 1871
+	thresh_dict[(10002,0,0,1)] = 1816
+	thresh_dict[(10002,0,0,2)] = 1733
+	thresh_dict[(10002,0,0,3)] = 1622
+	thresh_dict[(10002,0,0,4)] = 1482
+	thresh_dict[(10002,0,0,5)] = 1314
+	thresh_dict[(10002,0,0,6)] = 1117
+	"""
+	# Th4 set to 760 only
+	thresh_dict[(10002,0,0,0)] = 1779
+	thresh_dict[(10002,0,0,1)] = 1709
+	thresh_dict[(10002,0,0,2)] = 1623
+	thresh_dict[(10002,0,0,3)] = 1521
+	thresh_dict[(10002,0,0,4)] = 1403
+	thresh_dict[(10002,0,0,5)] = 1269
+	thresh_dict[(10002,0,0,6)] = 1118
+	"""
 	# TISC 10002
 	# GLITC 0
 	# Channel 1

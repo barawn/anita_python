@@ -6,6 +6,12 @@ import TISC_transition_offsets_dictionary as tod
 import TISC_threshold_setting_dictionary as tsd
 import matplotlib.cm as cm
 from matplotlib.backends.backend_pdf import PdfPages
+from scipy.optimize import leastsq
+from scipy.fftpack import fft
+import csv
+import matplotlib.gridspec as gridspec
+from scipy.stats import norm
+import math
 
 def setup(GLITC_n,wait_time=0.01):
 	    
@@ -131,7 +137,7 @@ def set_thresholds(GLITC,GLITC_n,channel,wait=0.01):
 		threshold_label = 7-thres_i
 		RITC, RITC_COMP = get_channel_info(channel,threshold_label)
 		threshold_value = tsd.get_threshold(10002,GLITC_n,channel,RITC_COMP)
-		print "Setting threshold %d to %d"%(threshold_label,threshold_value)
+		#print "Setting threshold %d to %d"%(threshold_label,threshold_value)
 		GLITC.rdac(RITC,RITC_COMP,threshold_value)
 		sleep(wait)
 		
@@ -477,6 +483,7 @@ def find_slope_offset(GLITC,channel,threshold_label,sample_number,transition_poi
 		
 	RITC,RITC_COMP = get_channel_info(channel,threshold_label)
 	
+
 
 	#rough_offset = offset
 	offset = rough_offset
@@ -1187,7 +1194,7 @@ def sample_scan(GLITC_n,channel,input_dac_value=800,threshold_label=4,pp=None,nu
 		plt.close()
 	return 0
 
-
+# Take in a dac value and calculate the corrected dac value
 def stitch_threshold_dac(GLITC_n,channel,RITC_DAC_Number,dac):
 	dac_temp = dac
 	"""
@@ -1224,7 +1231,7 @@ def stitch_threshold_dac(GLITC_n,channel,RITC_DAC_Number,dac):
 		dac_temp-=128+total_offset
 	return dac
 	
-	
+# Perform a threshold scan on one sample
 def threshold_scan(GLITC,GLITC_n,channel,threshold_label,sample_number,num_trials=10,min_threshold_range=0,max_threshold_range=4095,threshold_step=30,wait_time=0.01):
 	threshold_array = []
 	sample_value_array = []
@@ -1245,7 +1252,7 @@ def threshold_scan(GLITC,GLITC_n,channel,threshold_label,sample_number,num_trial
 
 	return sample_value_array,threshold_array
 	
-	
+# Perform a threshold scan of all samples	
 def threshold_scan_all_samples(GLITC,GLITC_n,channel,threshold_label,num_trials=10,min_threshold_range=0,max_threshold_range=4095,threshold_step=30,wait_time=0.01):
 	
 	threshold_array = []
@@ -1272,7 +1279,7 @@ def threshold_scan_all_samples(GLITC,GLITC_n,channel,threshold_label,num_trials=
 	
 	return sample_array,threshold_array
 
-
+# Scan the pedestal input and plot the result
 def manual_offset_scan(GLITC,GLITC_n,channel,threshold_label,transition_value,input_dac,num_trials=100,min_threshold_range=0,max_threshold_range=4095,threshold_step=1,wait_time=0.01):
 
 	colors = iter(cm.brg(np.linspace(0,1,32)))
@@ -1297,14 +1304,846 @@ def manual_offset_scan(GLITC,GLITC_n,channel,threshold_label,transition_value,in
 	print "Making plots"
 	for sample_i in range(32):
 		#make_scatter_plot(None,threshold_array,sample_array[sample_i],GLITC_n,channel,threshold_label,transition_value,input_dac,0,sample_i,1)
+		
 		plt.plot(threshold_array,sample_array[sample_i],color=next(colors),label=("Sample %d"%sample_i))
-	plt.legend()
+	#plt.legend()
+	plt.title("GLITC %d, Channel %d, Threshold %d, Input %d"%(GLITC_n,channel,threshold_label,input_dac))
+	plt.xlabel("Threshold DAC")
+	plt.ylabel("Output Value")
 	plt.show()
-	
-	
-	
-	
 	return sample_array,threshold_array
 
+# Used for reading output from a sine wave input	
+def RITC_storage_sine_plotter(GLITC,GLITC_n,channel,ped_dac=730,atten_dac=0,input_amp_p2p=200.0,input_freq=400000000.0,num_reads=1):
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	
+	offsets = get_individual_sample_offsets(GLITC_n,channel)
+	
+	reload(tsd)
+	print "Setting channel %d thresholds" % channel
+	set_thresholds(GLITC,GLITC_n,channel)
+	
+	if(GLITC.dac(channel)!=ped_dac):
+		sleep(0.01)
+		GLITC.dac(channel,ped_dac)
+		sleep(5)
+		
+	if(GLITC.atten(channel)!=atten_dac):
+		sleep(0.01)
+		GLITC.atten(channel,atten_dac)
+		sleep(5)
+	
+	time = np.linspace(0,time_step*num_samples,num_samples)
+	sample = GLITC.RITC_storage_read(channel,num_reads=num_reads*2)
+	sleep(0.01)
+
+	plt.figure(figsize=[16,12])
+	#plt.plot(time[0:4*32-1],sample[0:4*32-1],label=('Digitized Output: %d MHz Sine Wave (%d mV P2P)'%(input_freq/1000000,input_amp_p2p)))
+	plt.plot(time*10**9,sample,linestyle=':',label=('Digitized Output'))
+	
+	corrected_sample = sample
+	
+	for i in range(0,len(sample)-1):
+		if(sample[i]==7 and sample[i+1]<=4):
+			#print "Correcting down"
+			corrected_sample[i] = 4
+
+	corrected_sample = correct_individual_samples(sample,offsets)
+
+	#plt.plot(time[0:4*32-1],corrected_sample[0:4*32-1],label=('Glitc corrected Digitized Output: %d MHz Sine Wave (%d mV P2P)'%(input_freq/1000000,input_amp_p2p)))
+	plt.plot(time*10**9,corrected_sample,label=('Corrected Digitized Output'))
+	#print sample
+	#print corrected_sample
+	"""
+	#fitfunc = lambda p, x: p[0]*np.sin(2*np.pi*p[1]*x+p[2]) + p[3]
+	#errfunc = lambda p, x, y: fitfunc(p,x) - y
+	#p0 = [7.0,frequency[max_frequency_bin],0.0,3.5]
+	#p1,success = leastsq(errfunc, p0[:], args=(time,sample))
+	
+	#plt.plot(time[0:4*32-1],fitfunc(p1,time)[0:4*32-1],label=('Fit: %d MHz Sine Wave (%d mV P2P)'%(p1[1]/1000000,2*abs(p1[0]*54.0))))
+	"""
+	
+	plt.title("GLITC %d, Ch %d, Ped %d (%d mV), Atten %d (-%1.2f dB) - Input: %d MHz Sine Wave" % (GLITC_n,channel,ped_dac,ped_dac*2500/4095,atten_dac,atten_dac*0.25,input_freq/1000000))
+	plt.xlabel("Time [ns]")
+	plt.ylabel("Ouput Value")
+	plt.legend()
+	#plt.grid(True)
+	plt.ylim((0,7))
+	#plt.savefig(("/home/user/data/GLITC_%d/sine_study/%dMHz_sine_atten_%1.2fdB.png" % (GLITC_n,input_freq/1000000,atten_db)))
+	plt.show()
+	plt.close()
+	
+	corrected_sample_average = np.average(corrected_sample)
+	print corrected_sample_average
+	
+	sample_fft = fft(corrected_sample-corrected_sample_average)
+	frequency = np.linspace(0.0,1.0/(2.0*time_step),num_samples/2)
+	
+	max_frequency_bin = np.argmax(2.0/num_samples*np.abs(sample_fft[1:num_samples/2]))
+	print frequency[max_frequency_bin]
+	
+	plt.figure(figsize=[16,12])
+	plt.axvline(x=input_freq,linestyle="--",color='r',label=("Input Frequency: %dMHz"%(input_freq/1000000)))
+	plt.plot(frequency,2.0/num_samples*np.abs(sample_fft[0:num_samples/2]))
+	#plt.ylim((0,2.5))
+	plt.title("%d MHz Sine FFT"%(input_freq/1000000))
+	plt.title("Impulse Test")
+	plt.xlabel("Frequency [Hz]")
+	plt.ylabel("Amplitude")
+	plt.legend()
+	plt.grid(True)
+	#plt.savefig(("/home/user/data/GLITC_%d/sine_study/%dMHz_sine_fft_atten_%1.2fdB.png" % (GLITC_n,input_freq/1000000,atten_db)))
+	plt.show()
+	#plt.clf()
+	#plt.close()
+	del corrected_sample
+	del sample
+	
+	return None
+	
+# Used for reading output from an impulsive input
+def RITC_storage_impulse_only(GLITC,GLITC_n,channel,ped_dac=730,atten_dac=0,input_amp_p2p=200.0,num_reads=1):
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	
+	reload(tsd)
+	print "Setting channel %d thresholds" % channel
+	set_thresholds(GLITC,GLITC_n,channel)
+	
+	if(GLITC.dac(channel)!=ped_dac):
+		sleep(0.01)
+		GLITC.dac(channel,ped_dac)
+		sleep(5)
+		
+	if(GLITC.atten(channel)!=atten_dac):
+		sleep(0.01)
+		GLITC.atten(channel,atten_dac)
+		sleep(5)
+	
+	time = np.linspace(0,time_step*num_samples,num_samples)
+	sample = GLITC.RITC_storage_read(channel,num_reads=num_reads*2)
+	sleep(0.01)
+	
+
+	plt.figure(figsize=[16,12])
+	#plt.plot(time[0:4*32-1],sample[0:4*32-1],label=('Digitized Output: %d MHz Sine Wave (%d mV P2P)'%(input_freq/1000000,input_amp_p2p)))
+	plt.plot(time*10**9,sample,linestyle=':',label=('Digitized Output'))
+	
+	corrected_sample = sample
+	
+	for i in range(0,len(sample)-1):
+		if(sample[i]==7 and sample[i+1]<=4):
+			#print "Correcting down"
+			corrected_sample[i] = 4
+
+	#plt.plot(time[0:4*32-1],corrected_sample[0:4*32-1],label=('Glitc corrected Digitized Output: %d MHz Sine Wave (%d mV P2P)'%(input_freq/1000000,input_amp_p2p)))
+	plt.plot(time*10**9,corrected_sample,label=('Glitch Corrected Digitized Output'))
+	#print sample
+	#print corrected_sample
+	
+	#fitfunc = lambda p, x: p[0]*np.sin(2*np.pi*p[1]*x+p[2]) + p[3]
+	#errfunc = lambda p, x, y: fitfunc(p,x) - y
+	#p0 = [7.0,frequency[max_frequency_bin],0.0,3.5]
+	#p1,success = leastsq(errfunc, p0[:], args=(time,sample))
+	
+	
+	
+	#plt.plot(time[0:4*32-1],fitfunc(p1,time)[0:4*32-1],label=('Fit: %d MHz Sine Wave (%d mV P2P)'%(p1[1]/1000000,2*abs(p1[0]*54.0))))
+	plt.title("%d mV Peak-Peak Impulse - GLITC %d, Ch %d, Ped %d (%d mV), Atten %d (-%1.2f dB)" % (input_amp_p2p,GLITC_n,channel,ped_dac,ped_dac*2500/4095,atten_dac,atten_dac*0.25))
+	plt.xlabel("Time [ns]")
+	plt.ylabel("Ouput Value")
+	plt.legend()
+	#plt.grid(True)
+	plt.ylim((0,7))
+	plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
+	plt.show()
+	plt.close()
+	
+	corrected_sample_average = np.average(corrected_sample)
+	print corrected_sample_average
+	
+	sample_fft = fft(corrected_sample-corrected_sample_average)
+	sample_fft/=num_samples/2
+	frequency = np.linspace(0.0,1.0/(2.0*time_step),num_samples/2)
+	
+	max_frequency_bin = np.argmax(2.0/num_samples*np.abs(sample_fft[1:num_samples/2]))
+	print frequency[max_frequency_bin]
+	
+	plt.figure(figsize=[16,12])
+	#plt.axvline(x=input_freq,linestyle="--",color='r',label=("Input Frequency: %dMHz"%(input_freq/1000000)))
+	plt.plot(frequency,2.0/num_samples*np.abs(sample_fft[0:num_samples/2]))
+	#plt.ylim((0,2.5))
+	plt.title("%d mV Peak-Peak Impulse FFT"%(input_amp_p2p))
+	#plt.title("Impulse Test")
+	plt.xlabel("Frequency [Hz]")
+	plt.ylabel("Amplitude")
+	plt.legend()
+	plt.grid(True)
+	plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_fft_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
+	plt.show()
+	#plt.clf()
+	#plt.close()
+	del corrected_sample
+	del sample
+	
+	return None
+
+# Performs a scan of the pedestal inputs and saves each samples output seperately	
+def pedestal_vs_sample_scan(GLITC,GLITC_n,channel,ped_min=525,ped_max=925,ped_step=1,num_reads=248):
+	
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+
+	reload(tsd)
+	print "Setting channel %d thresholds" % channel
+	set_thresholds(GLITC,GLITC_n,channel)
+	
+	ped_array = np.arange(ped_min,ped_max+1,ped_step)
+	num_peds = len(ped_array)
+	
+	sample_array = np.zeros((samples_per_vcdl,num_peds))
+	average_sample = np.zeros(num_peds)
+	
+	for ped_i in range(num_peds):
+		
+		print "Setting pedestal to %d"%ped_array[ped_i]
+		GLITC.dac(channel,int(ped_array[ped_i]))
+		sleep(5)
+		
+		sample = GLITC.RITC_storage_read(channel,num_reads=num_reads*2)
+
+		#print len(sample)
+		for block_i in range(num_reads):
+			
+			for sample_i in range(samples_per_vcdl):
+				sample_array[sample_i,ped_i]+=sample[block_i*samples_per_vcdl+sample_i]
+				average_sample[ped_i]+=sample[block_i*samples_per_vcdl+sample_i]
+	
+	sample_array/=num_reads
+	average_sample/=(num_reads*samples_per_vcdl)
+	
+	"""
+	plt.figure(figsize=(16,12))
+	for samp_i in range(samples_per_vcdl):
+		plt.plot(ped_array,average_sample,label="All sample average")
+		plt.plot(ped_array,sample_array[samp_i],label=("Sample %d"%samp_i))
+		plt.ylim((0,7))
+		plt.legend()
+		plt.title("GLITC %d, Ch %d, Sample %d"%(GLITC_n,channel,samp_i))
+		plt.xlabel("Pedestal DAC")
+		plt.ylabel("Averaged Output")
+		plt.savefig(("/home/user/data/GLITC_%d/G%d_Ch%d_sample%d_ped_only.png" % (GLITC_n,GLITC_n,channel,samp_i)))
+		plt.clf()
+	plt.show()
+	"""
+	datafile_array = [0]*2
+	
+	with open('/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_ped_only_2.dat'%(GLITC_n,channel,GLITC_n,channel),'wb') as f:
+		writer = csv.writer(f)
+		writer.writerow(['Ped_DAC','Avg_Sample','Samples_0_to_31'])
+		for i in range(num_peds):
+			datafile_array[0] = ped_array[i]
+			datafile_array[1] = average_sample[i]
+			writer.writerow(np.concatenate((datafile_array,sample_array[:,i])))
+	
+	
+	return None
+	
+# Take the saved data from the module above and generate plots	
+def pedestal_vs_sample_scan_from_file(GLITC_n,channel):
+	
+	samples_per_vcdl = 32
+	ped_array = []
+	sample_array = []
+	average_sample = []
+	offset_min = -2
+	offset_max = 2
+	offset_step = 0.1
+	
+	with open('/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_ped_only.dat'%(GLITC_n,GLITC_n,channel,channel),'rb') as datafile:
+		datareader = csv.reader(datafile, delimiter=',', quotechar='|')
+		
+		row_number = 0
+		header_flag = 0
+
+		# Read in and plot the data
+		for row in datareader:
+			
+			if (header_flag == 0):
+				header_flag = 1
+			else:			
+				ped_array.append(float(row[0]))
+				average_sample.append(float(row[1]))
+				sample_array.append(row[2:])
+
+	num_peds = len(ped_array)
+	ped_array = np.array(ped_array)
+	sample_array = np.array(sample_array)
+	sample_array = sample_array.astype(np.float)
+	sample_array = np.transpose(sample_array)
+	
+	ideal_coeff = np.polyfit(ped_array,average_sample,1)
+	ideal_line = np.zeros(num_peds)
+	ideal_line = ideal_coeff[0]*ped_array+ideal_coeff[1]
+	rmse_bc = 1/np.sqrt(12)
+
+	gs = gridspec.GridSpec(3,1)
+	for samp_i in range(samples_per_vcdl):
+		
+		rms_error = get_RMS_error(sample_array[samp_i],ideal_line)
+		residuals = np.subtract(sample_array[samp_i],ideal_line)
+		rms_error = np.sqrt(rmse_bc**2-rms_error**2)
+		"""
+		fig = plt.figure(figsize=(16,12))
+		ax1 = fig.add_subplot(gs[:2,0])#, sharex=True)
+		ax2 = fig.add_subplot(gs[2,0])
+		fig.subplots_adjust(hspace=0.1)
+		#ax1.plot(ped_array,average_sample,label="All sample average")
+		ax1.plot(ped_array,sample_array[samp_i],label=("Sample %d (RMSE %1.2f)"%(samp_i,rms_error)),color='b')
+		ax1.plot(ped_array,ideal_line,linestyle="--",label=("Ideal Line"),color='r')
+		ax1.legend(loc=0)
+		ax1.set_title("GLITC %d, Ch %d, Sample %d"%(GLITC_n,channel,samp_i))
+		ax1.set_ylabel("Averaged Output")
+		
+		
+		ax2.plot(ped_array,residuals,label=("Sample - Ideal"))
+		ax2.axhline(y=0,linestyle="--",color='r')
+		ax2.set_xlabel("Pedestal DAC")
+		ax2.legend(loc=3)
+		plt.show()
+		#plt.savefig(("/home/user/data/GLITC_%d/sample_study/channel _%d/G%d_Ch%d_sample%d_ped_only.png" % (GLITC_n,channel,GLITC_n,channel,samp_i)))
+		#plt.clf()
+		"""
+		best_rms_error,best_offset,rms_corrected_sample_array = minimize_RMS_error(sample_array[samp_i],ideal_line,offset_min,offset_max,offset_step)
+		rms_corrected_residuals = np.subtract(rms_corrected_sample_array,ideal_line)
+		rms_corrected_residuals = np.sqrt(rmse_bc**2-rms_corrected_residuals**2)
+		
+		fig = plt.figure(figsize=(16,12))
+		ax1 = fig.add_subplot(gs[:2,0])#, sharex=True)
+		ax2 = fig.add_subplot(gs[2,0])
+		fig.subplots_adjust(hspace=0.1)
+		#ax1.plot(ped_array,average_sample,label="All sample average")
+		ax1.plot(ped_array,rms_corrected_sample_array,label=("Corrected Sample %d (RMSE %1.2f)"%(samp_i,best_rms_error)),color='b')
+		#ax1.plot(ped_array,mean_corrected_sample_array,label=("Sample %d Mean"%samp_i))
+		ax1.plot(ped_array,sample_array[samp_i],linestyle=":",color='b',label=("Non-corrected (RMSE %1.2f)"%rms_error))
+		ax1.plot(ped_array,ideal_line,linestyle="--",label=("Ideal Line"),color='r')
+		ax1.legend(loc=0)
+		ax1.set_title("GLITC %d, Ch %d, Sample %d - RMS Corrected by %1.2f"%(GLITC_n,channel,samp_i,best_offset))
+		ax1.set_ylabel("Averaged Output")
+		
+		#residuals = np.subtract(sample_array[samp_i],ideal_line)
+		ax2.plot(ped_array,rms_corrected_residuals,label="Corrected Sample - Ideal")
+		ax2.plot(ped_array,residuals,linestyle=":",color='b',label="Non-corrected")
+		ax2.axhline(y=0,linestyle="--",color='r')
+		ax2.set_xlabel("Pedestal DAC")
+		ax2.legend(loc=3)
+		#plt.show()
+		plt.savefig(("/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_sample%d_ped_only_rmse_corrected.png" % (GLITC_n,channel,GLITC_n,channel,samp_i)))
+		plt.clf()
+		plt.close()
+
+	return None
+
+# Take in two array of equal length and find the overall offset that minimizes the RMS error		
+def minimize_RMS_error(data,prediction,offset_min,offset_max,offset_step):
+	
+	best_rms_error = 100000000000000
+	offset_array = np.arange(offset_min,offset_max,offset_step)
+	for offset_i in range(len(offset_array)):
+		
+		rms_error = get_RMS_error(data+offset_array[offset_i],prediction)
+		
+		if(rms_error<best_rms_error):
+			best_rms_error = rms_error
+			best_offset = offset_array[offset_i]
+			
+	return best_rms_error,best_offset,data+best_offset
+
+# Take in two arrays of equal length and returns the RMS error		
+def get_RMS_error(data,prediction):
+	rms_error = np.sqrt(np.mean(np.square(np.subtract(data,prediction))))
+	return rms_error
+
+# Takes the saved data from the pedestal sample scan and find the individual sample offsets
+def pedestal_vs_sample_scan_individual_correction(GLITC_n,channel):
+	
+	samples_per_vcdl = 32
+	ped_array = []
+	sample_array = []
+	average_sample = []
+	rmse_bc = 1/np.sqrt(12)
+	
+	offset_min = -2
+	offset_max = 2
+	offset_step = 0.1
+	
+	
+	
+	with open('/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_ped_only_2.dat'%(GLITC_n,channel,GLITC_n,channel),'rb') as datafile:
+		datareader = csv.reader(datafile, delimiter=',', quotechar='|')
+		
+		row_number = 0
+		header_flag = 0
+
+		# Read in and plot the data
+		for row in datareader:
+			
+			if (header_flag == 0):
+				header_flag = 1
+			else:			
+				ped_array.append(float(row[0]))
+				average_sample.append(float(row[1]))
+				sample_array.append(row[2:])
+				
+	print "Done reading from file"
+	num_peds = len(ped_array)
+	ped_array = np.array(ped_array)
+	sample_array = np.array(sample_array)
+	sample_array = sample_array.astype(np.float)
+	sample_array = np.transpose(sample_array)
+	
+	sample_corrected_array = np.zeros((32,len(ped_array)))
+	sample_correction = np.zeros((32,len(ped_array)))
+	
+	ideal_coeff = np.polyfit(ped_array,average_sample,1)
+	ideal_line = np.zeros(num_peds)
+	ideal_line = ideal_coeff[0]*ped_array+ideal_coeff[1]
+	
+	hist = [[0 for x in range(8)] for x in range(32)]
+	weight = [[0 for x in range(8)] for x in range(32)]
+	offsets = [[0 for x in range(8)] for x in range(32)]
+	
+	rmse_low_bound = int((-0.5-ideal_coeff[1])/ideal_coeff[0])
+	rmse_high_bound = int((7.5-ideal_coeff[1])/ideal_coeff[0])
+	
+	rmse_low_bound_index = (np.abs(ped_array - rmse_low_bound)).argmin()
+	rmse_high_bound_index = (np.abs(ped_array - rmse_high_bound)).argmin()
+	
+	#pp = PdfPages("/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_threshold_histograms.pdf" % (GLITC_n,channel,GLITC_n,channel))
+	
+	# Find offsets for each sample and each threshold level
+	for sample_i in range(32):
+		print "Scanning sample %d"%sample_i
+		for thres_i in range(8):
+			temp_hist = []
+			temp_weight = []
+			for ped_i in range(num_peds):
+				output_val = sample_array[sample_i][ped_i]
+				if((thres_i ==7) and (output_val > (6)) and (ped_i < ((7.5-ideal_coeff[1])/ideal_coeff[0]) )):
+					temp_hist.append(ped_array[ped_i])
+					temp_weight.append( output_val-(thres_i-1) )
+				elif((thres_i ==0) and (output_val < (1)) and (ped_i > ((-0.5-ideal_coeff[1])/ideal_coeff[0]) )):
+					temp_hist.append(ped_array[ped_i])
+					temp_weight.append( (thres_i+1)-output_val )
+				elif ((output_val > (thres_i-1)) and (output_val < thres_i)):
+					temp_hist.append(ped_array[ped_i])
+					temp_weight.append( output_val-(thres_i-1) )
+				elif (output_val == thres_i ):
+					temp_hist.append(ped_array[ped_i])
+					temp_weight.append(1)
+				elif ((output_val > (thres_i)) and (output_val < (thres_i+1))):
+					temp_hist.append(ped_array[ped_i])
+					temp_weight.append( (thres_i+1)-output_val )
+			if(len(temp_hist)!=0):
+				hist[sample_i][thres_i] = temp_hist
+				weight[sample_i][thres_i] = temp_weight	
+			
+				plot_hist,bin_edges = np.histogram(hist[sample_i][thres_i],len(ped_array),weights=weight[sample_i][thres_i],range=[np.amin(ped_array),np.amax(ped_array)])
+				mu,sigma = norm.fit(hist[sample_i][thres_i])
+				offsets[sample_i][thres_i] = (-1)*round((float(thres_i) - float(ideal_coeff[0]*mu+ideal_coeff[1]))*8)/8.0
+			else:
+				offsets[sample_i][thres_i] = 0
+			
+			plt.figure(figsize=(16,12))
+			plt.hist(hist[sample_i][thres_i],len(ped_array)/2,weights=weight[sample_i][thres_i],range=[np.amin(ped_array),np.amax(ped_array)],label=("Mu %1.2f"%mu))
+			plt.axvline(mu)
+			plt.xlim(np.amin(hist[sample_i][thres_i]),np.amax(hist[sample_i][thres_i]))
+			plt.xlabel("Pedestal DAC")
+			plt.title("GLITC %d, Ch %d, Sample %d, Threshold %d Histogram"%(GLITC_n,channel,sample_i,thres_i))
+			#plt.savefig(pp, format='pdf')
+			plt.show()
+			plt.clf()
+			
+			sample_correction[sample_i] = np.add(plot_hist*offsets[sample_i][thres_i],sample_correction[sample_i])
+
+	
+		
+		sample_corrected_array[sample_i] = np.add(sample_correction[sample_i],sample_array[sample_i])
+		
+	#pp.close()
+	
+	plt.figure(figsize=(16,12))	
+	plt.hist(np.reshape(offsets,32*8),16)
+	plt.title("GLITC %d, Ch %d Sample Offset Histogram"%(GLITC_n,channel))
+	plt.xlabel("Offsets [threshold levels]")
+	#plt.savefig(("/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_all_offsets_histogram.png" % (GLITC_n,channel,GLITC_n,channel)))
+	plt.show()
+	plt.clf()
+	plt.close()
+	
+	"""
+	# Save sample_threshold offsets
+	with open('/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_sample_threshold_offsets.dat'%(GLITC_n,channel,GLITC_n,channel),'wb') as f:
+		writer = csv.writer(f)
+		for i in range(samples_per_vcdl):
+			writer.writerow(offsets[i])
+	"""
+	# Make plots
+	gs = gridspec.GridSpec(3,1)
+	for samp_i in range(samples_per_vcdl):
+		
+		rms_error = get_RMS_error(sample_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index])
+		residuals = np.subtract(sample_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index])
+		rms_error = np.sqrt(abs(rmse_bc**2-rms_error**2))
+		
+		"""
+		fig = plt.figure(figsize=(16,12))
+		ax1 = fig.add_subplot(gs[:2,0])#, sharex=True)
+		ax2 = fig.add_subplot(gs[2,0])
+		fig.subplots_adjust(hspace=0.1)
+		#ax1.plot(ped_array,average_sample,label="All sample average")
+		ax1.plot(ped_array,sample_array[samp_i],label=("Sample %d (RMSE %1.2f)"%(samp_i,rms_error)),color='b')
+		ax1.plot(ped_array,ideal_line,linestyle="--",label=("Ideal Line"),color='r')
+		ax1.legend(loc=0)
+		ax1.set_title("GLITC %d, Ch %d, Sample %d"%(GLITC_n,channel,samp_i))
+		ax1.set_ylabel("Averaged Output")
+		
+		
+		ax2.plot(ped_array,residuals,label=("Sample - Ideal"))
+		ax2.axhline(y=0,linestyle="--",color='r')
+		ax2.set_xlabel("Pedestal DAC")
+		ax2.legend(loc=3)
+		plt.show()
+		#plt.savefig(("/home/user/data/GLITC_%d/sample_study/channel _%d/G%d_Ch%d_sample%d_ped_only.png" % (GLITC_n,channel,GLITC_n,channel,samp_i)))
+		#plt.clf()
+		"""
+		best_rms_error,best_offset,rms_corrected_sample_array = minimize_RMS_error(sample_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index],offset_min,offset_max,offset_step)
+		rms_corrected_residuals = np.subtract(rms_corrected_sample_array,ideal_line[rmse_low_bound_index:rmse_high_bound_index])
+		#rms_corrected_residuals = np.sqrt(abs(rmse_bc**2-rms_corrected_residuals**2))
+		best_rms_error = np.sqrt(abs(rmse_bc**2-best_rms_error**2))
+		
+		ind_corr_rms_error = get_RMS_error(sample_corrected_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index])
+		ind_corr_residuals = np.subtract(sample_corrected_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index])
+		ind_corr_rms_error = np.sqrt(abs(rmse_bc**2-ind_corr_rms_error**2))
+		
+		fig = plt.figure(figsize=(16,12))
+		ax1 = fig.add_subplot(gs[:2,0])#, sharex=True)
+		ax2 = fig.add_subplot(gs[2,0])
+		fig.subplots_adjust(hspace=0.1)
+		#ax1.plot(ped_array,average_sample,label="All sample average")
+		ax1.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],rms_corrected_sample_array,label=("Corrected Sample %d (RMSE %1.2f)"%(samp_i,best_rms_error)),color='b')
+		ax1.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],sample_corrected_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],label=("Ind. Corr. Sample %d (RMSE %1.2f)"%(samp_i,ind_corr_rms_error)),color='g')
+		ax1.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],sample_array[samp_i][rmse_low_bound_index:rmse_high_bound_index],linestyle=":",color='b',label=("Non-corrected (RMSE %1.2f)"%rms_error))
+		ax1.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],ideal_line[rmse_low_bound_index:rmse_high_bound_index],linestyle="--",label=("Ideal Line"),color='r')
+		ax1.legend(loc=0)
+		ax1.set_title("GLITC %d, Ch %d, Sample %d Corrected Transfer Curves"%(GLITC_n,channel,samp_i))
+		#ax1.set_title("GLITC %d, Ch %d, Sample %d Transfer Curve"%(GLITC_n,channel,samp_i))
+		ax1.set_ylabel("Averaged Output")
+		
+		#residuals = np.subtract(sample_array[samp_i],ideal_line)
+		ax2.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],rms_corrected_residuals,label="RMS Corr.")
+		ax2.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],residuals,linestyle=":",color='b',label="Non-corrected")
+		ax2.plot(ped_array[rmse_low_bound_index:rmse_high_bound_index],ind_corr_residuals,linestyle="-",color='g',label="Ind. Samp. corrected")
+		ax2.axhline(y=0,linestyle="--",color='r')
+		ax2.set_xlabel("Pedestal DAC")
+		ax2.legend(loc=3)
+		plt.show()
+		#plt.savefig(("/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_sample%d_ped_only_ind_thres_corrected.png" % (GLITC_n,channel,GLITC_n,channel,samp_i)))
+		plt.clf()
+		plt.close()
+	
+	return None
+
+# Read the individual sample offsets file and returns a 2d matrix [sample]x[threshold_level]
+def get_individual_sample_offsets(GLITC_n,channel):
+	
+	offsets = [[0 for x in range(8)] for x in range(32)]
+	row_counter = 0
+	with open('/home/user/data/GLITC_%d/sample_study/channel_%d/G%d_Ch%d_sample_threshold_offsets.dat'%(GLITC_n,channel,GLITC_n,channel),'rb') as datafile:
+		datareader = csv.reader(datafile, delimiter=',', quotechar='|')
+		# Read in and plot the data
+		for row in datareader:
+			for thres_i in range(8):
+				offsets[row_counter][thres_i] = float(row[thres_i])			
+			row_counter+=1
+	
+	
+	return offsets
+	
+# Take in a sample array and a offsets matrix and corrects it
+def correct_individual_samples(sample_array,offsets):
+	
+	if(len(sample_array)%32!=0):
+		print "Samples array must include all 32 samples and begin with sample 0!"
+		return 1
+	
+	num_sample_blocks = int(len(sample_array)/32)
+	
+	return_array = np.zeros(len(sample_array))
+	
+	for block_i in range(num_sample_blocks):
+		for samp_i in range(32):
+			threshold_level = int(sample_array[32*block_i+samp_i])
+			#print threshold_level
+			return_array[32*block_i+samp_i] = sample_array[32*block_i+samp_i] + offsets[samp_i][threshold_level]
+	
+	return return_array
 
 
+def round_to_nearest_half(sample_array):
+	
+	rounded_array = [0]*len(sample_array)
+	
+	
+	for i in range(len(sample_array)):
+		
+		sign = np.sign(sample_array[i])
+		#print "sign:%d"%sign
+		sample_decimal = int((abs(sample_array[i])-int(abs(sample_array[i])))*8.0)
+		#print "sample_decimal:%d"%sample_decimal
+		
+		if(sample_decimal == 7 or sample_decimal == 3 or sample_decimal ==6):
+			rounded_array[i] = math.floor(abs(sample_array[i])*2+1)/2
+		else:
+			rounded_array[i] = math.floor(abs(sample_array[i])*2)/2
+		
+		rounded_array[i]*=sign
+		
+	return rounded_array
+
+# Do all the operations that the GLITC will to and return the correlated sum
+def perform_GLITC_ops(A,B,C):
+
+
+	# Add samples together
+	abc_add = np.add(np.add(A,B),C)
+	#print abc_add
+	
+	# Round to nearest 0.5
+	abc_add_rounded = round_to_nearest_half(abc_add)
+	#print abc_add_rounded
+	
+	# Square
+	abc_square = np.square(abc_add_rounded)
+	#print abc_square
+	
+	# Sum
+	correlated_sum = np.sum(abc_square)
+	
+
+	return correlated_sum, abc_add, abc_add_rounded, abc_square
+
+
+def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0,num_reads=1):
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	
+	reload(tsd)
+	for ch_i in range(RITC*4,RITC*4+3):
+		print "Setting channel %d thresholds" % ch_i
+		set_thresholds(GLITC,GLITC_n,ch_i)
+	
+		if(GLITC.dac(ch_i)!=ped_dac):
+			sleep(0.01)
+			GLITC.dac(ch_i,ped_dac)
+			sleep(5)
+			
+		if(GLITC.atten(ch_i)!=atten_dac):
+			sleep(0.01)
+			GLITC.atten(ch_i,atten_dac)
+			sleep(5)
+			
+	a_offsets = get_individual_sample_offsets(GLITC_n,RITC*4)
+	b_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+1)
+	c_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+2)
+		
+	time = np.linspace(0,time_step*num_samples,num_samples)*10**9
+	a_sample,b_sample,c_sample = GLITC.RITC_storage_read_3ch(RITC,num_reads=num_reads*2)
+	sleep(0.01)
+
+	a_corrected_sample = a_sample
+	b_corrected_sample = b_sample
+	c_corrected_sample = c_sample
+
+	# 4-3 Glitch correction
+	for i in range(0,len(a_sample)-1):
+		if(a_sample[i]==7 and a_sample[i+1]<=4):
+			#print "Correcting down"
+			a_corrected_sample[i] = 4
+		if(b_sample[i]==7 and b_sample[i+1]<=4):
+			#print "Correcting down"
+			b_corrected_sample[i] = 4
+		if(c_sample[i]==7 and c_sample[i+1]<=4):
+			#print "Correcting down"
+			c_corrected_sample[i] = 4
+
+	# Individual Sample Correction
+	a_corrected_sample = np.array(correct_individual_samples(a_corrected_sample,a_offsets))-3.5
+	b_corrected_sample = np.array(correct_individual_samples(b_corrected_sample,b_offsets))-3.5
+	c_corrected_sample = np.array(correct_individual_samples(c_corrected_sample,c_offsets))-3.5
+	
+	a_sample = np.array(a_sample)-3.5
+	b_sample = np.array(b_sample)-3.5
+	c_sample = np.array(c_sample)-3.5
+
+	correlated_sum,abc_add,abc_add_rounded,abc_square = perform_GLITC_ops(a_corrected_sample,b_corrected_sample,c_corrected_sample)
+	uncorrected_correlated_sum, uncorrected_abc_add, uncorrected_abc_add_rounded,uncorrected_abc_square = perform_GLITC_ops(a_sample,b_sample,c_sample)
+
+	###############################################################
+	# Center window on impulse
+	window_width = 1000
+	available_time_window = time[window_width/2+1:len(abc_add)-window_width/2-1]
+	#available_window = abc_add[window_width/2+1:len(abc_add)-window_width/2-1]
+	available_window = abc_square[window_width/2+1:len(abc_add)-window_width/2-1]
+	
+	high_peak_position = window_width/2+1+available_window.argmax()
+	low_peak_position = window_width/2+1+available_window.argmin()
+	#print time[high_peak_position]
+	#print time[low_peak_position]
+	
+	#if(abs(abc_add[high_peak_position])>=abs(abc_add[low_peak_position])):
+	if(abs(abc_square[high_peak_position])>=abs(abc_square[low_peak_position])):
+		peak_position = high_peak_position
+	else:
+		peak_position = low_peak_position
+	
+	#impulse_ptp = abc_add[high_peak_position]-abc_add[low_peak_position]
+	impulse_ptp = abc_square[high_peak_position]-abc_square[low_peak_position]
+	
+	#noise_rms = np.sqrt(np.mean(np.square(abc_add[peak_position-window_width/2:peak_position-10])))
+	noise_rms = np.sqrt(np.mean(np.square(abc_square[peak_position-window_width/2:peak_position-100])))
+	
+	SNR = impulse_ptp/(2.0*noise_rms)
+	print "Corrected Waveform Information"
+	print "Impulse Peak-to-Peak: %1.2f"%impulse_ptp
+	print "Peak location in time %1.2fns"%(time[peak_position])
+	print "Noise RMS: %1.2f"%noise_rms
+	print "SNR: %1.2f"%SNR
+	print "Correlated Sum: %1.2f\n"%correlated_sum
+	
+	#plot_array_y = abc_add[peak_position-window_width/2:peak_position+window_width/2]
+	plot_array_y = abc_square[peak_position-window_width/2:peak_position+window_width/2]
+	plot_array_x = time[peak_position-window_width/2:peak_position+window_width/2]
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(plot_array_x,plot_array_y)
+	plt.ylim([0,110.5])
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	#uncorrected_impulse_ptp = uncorrected_abc_add[high_peak_position]-uncorrected_abc_add[low_peak_position]
+	uncorrected_impulse_ptp = uncorrected_abc_square[high_peak_position]-uncorrected_abc_square[low_peak_position]
+	
+	#uncorrected_noise_rms = np.sqrt(np.mean(np.square(uncorrected_abc_add[peak_position-window_width/2:peak_position-10])))
+	uncorrected_noise_rms = np.sqrt(np.mean(np.square(uncorrected_abc_square[peak_position-window_width/2:peak_position-100])))
+	
+	uncorrected_SNR = uncorrected_impulse_ptp/(2.0*uncorrected_noise_rms)
+	print "Uncorrected Waveform Information"
+	print "Impulse Peak-to-Peak: %1.2f"%uncorrected_impulse_ptp
+	print "Peak location in time %1.2fns"%(time[peak_position])
+	print "Noise RMS: %1.2f"%uncorrected_noise_rms
+	print "SNR: %1.2f"%uncorrected_SNR
+	print "Correlated Sum: %1.2f\n"%uncorrected_correlated_sum
+	
+	plt.figure(figsize=([16,12]))
+	plot_array_y = uncorrected_abc_square[peak_position-window_width/2:peak_position+window_width/2]
+	plot_array_x = time[peak_position-window_width/2:peak_position+window_width/2]
+	
+	plt.plot(plot_array_x,plot_array_y)
+	plt.ylim([0,110.5])
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	
+	#######################################################
+	
+	"""
+	# Plot Stuff
+	plot_arraya = a_corrected_sample
+	plot_arrayb = b_corrected_sample
+	plot_arrayc = c_corrected_sample
+	print "Correlation Sum: %1.2f"%correlated_sum
+	
+	plt.figure(figsize=(16,12))
+	plt.plot(time*10**9,plot_arraya)
+	plt.plot(time*10**9,plot_arrayb)
+	plt.plot(time*10**9,plot_arrayc)
+	plt.title("GLITC %d, RITC %d"%(GLITC_n,RITC))
+	plt.xlabel("Time[ns]")
+	plt.ylabel("RITC Output")
+	plt.ylim([-3.5,3.5])
+	#plt.ylim([-10.5,10.5])
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	plot_array = abc_add_rounded
+	
+	plt.figure(figsize=(16,12))
+	plt.plot(time*10**9,plot_array)
+	plt.title("GLITC %d, RITC %d ABC Added"%(GLITC_n,RITC))
+	plt.xlabel("Time[ns]")
+	plt.ylabel("ABC Added Output")
+	plt.ylim([-10.5,10.5])
+	#plt.ylim([-10.5,10.5])
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	plot_array = abc_square
+	
+	plt.figure(figsize=(16,12))
+	plt.plot(time*10**9,plot_array)
+	plt.title("GLITC %d, RITC %d Squared"%(GLITC_n,RITC))
+	plt.xlabel("Time[ns]")
+	plt.ylabel("ABC Added Output")
+	plt.ylim([0,100])
+	#plt.ylim([-10.5,10.5])
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	
+	
+	plot_array_average = np.average(plot_array)
+	
+	sample_fft = fft(plot_array-plot_array_average)
+	sample_fft/=num_samples/2
+	frequency = np.linspace(0.0,1.0/(2.0*time_step),num_samples/2)
+	
+	max_frequency_bin = np.argmax(2.0/num_samples*np.abs(sample_fft[1:num_samples/2]))
+	print frequency[max_frequency_bin]
+	
+	plt.figure(figsize=[16,12])
+	#plt.axvline(x=input_freq,linestyle="--",color='r',label=("Input Frequency: %dMHz"%(input_freq/1000000)))
+	plt.plot(frequency/10**6,2.0/num_samples*np.abs(sample_fft[0:num_samples/2]))
+	#plt.ylim((0,2.5))
+	plt.title("Squared Board Noise FFT")
+	#plt.title("Impulse Test")
+	plt.xlabel("Frequency [MHz]")
+	plt.ylabel("Amplitude")
+	plt.legend()
+	plt.grid(True)
+	#plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_fft_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
+	#plt.show()
+	#plt.clf()
+	#plt.close()
+	#del corrected_sample
+	#del sample
+	"""
+	return None

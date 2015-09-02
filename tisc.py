@@ -177,13 +177,15 @@ class GLITC:
             'DPCOUNTER'      : 0x00008C,
             'DPIDELAY'       : 0x000090,
             'DPSCALER'		 : 0x000094,
+            'STORCTRL'		 : 0x0000C0,
             'RDINPUT'        : 0x000100,
             'RDCTRL'         : 0x000104,
             'settings_dac'   : 0x000140,
             'settings_atten' : 0x000160,
             'settings_sc'    : 0x000178,
             'settings_pb'    : 0x00017C,
-            'phasescan_pb'   : 0x000058}
+            'phasescan_pb'   : 0x000058,
+            'RITC_STORAGE'   : 0x008000}
             
     def __init__(self, dev, base):
         self.dev = dev
@@ -221,7 +223,6 @@ class GLITC:
         print "                          : Training latch is %senabled" % ("" if ctrl[28] else "not ")	
 	
 	
-
     def datapath_input_ctrl(self, enable):
         val = bf(self.read(self.map['DPCTRL0']))
         if enable == 0:
@@ -301,8 +302,6 @@ class GLITC:
             val[13] = 1
             val[12:8] = value
         self.write(self.map['DPCTRL1'], int(val))
-        
-
 
     def counters(self):
         val = bf(0)
@@ -313,8 +312,6 @@ class GLITC:
             v2 = bf(self.read(self.map['DPCOUNTER']))
             print "Channel %d: %d" % (i, v2[15:0])
             
-    
-
     def train_latch_ctrl(self, en):
         val = bf(self.read(self.map['DPTRAINING']))
         val[28] = en
@@ -339,6 +336,119 @@ class GLITC:
         self.write(self.map['DPTRAINING'], int(val))
         v2 = bf(self.read(self.map['DPTRAINING']))
         return v2[7:0]
+        
+        
+    def RITC_storage_read_3ch(self,RITC,addr_in=0,num_reads=1):
+        addr = bf(0)
+        data = bf(0)
+        
+        value_array_1 = []
+        value_array_2 = []
+        value_array_3 = []
+        
+        #print "Reading from channel %d"%channel
+        if (num_reads>=512):
+            print "Too many reads. Block ram only holds 512."
+            return 1
+        
+        if(RITC<1):
+            start_channel = 0
+        else:
+            start_channel = 3
+                   
+        
+        
+        # Clear the block RAM
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        
+        # Fill the block RAM
+        self.write(self.map['STORCTRL'],0x1)
+        time.sleep(0.1)
+        
+        # Read the block RAM as many times as needed
+        for ch_i in range(start_channel,start_channel+3):
+            addr[12:10]=ch_i
+            addr[9:1]=addr_in
+            temp_array = []
+            self.write(self.map['RITC_STORAGE']+int(addr)*4,0x0)
+            for read_i in range(num_reads):
+			    #self.read(self.map['RITC_STORAGE']
+			    value0 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4))
+			    time.sleep(0.01)
+			    for i in range(8):
+				    sample_start = int(3*i)
+				    sample_end = int(sample_start+2)
+				    temp_array.append(value0[sample_end:sample_start])
+			
+			    value1 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4)) 
+			    time.sleep(0.01)	
+			    for i in range(8):
+				    sample_start = int(3*i)
+				    sample_end = int(sample_start+2)
+				    temp_array.append(value1[sample_end:sample_start])
+            
+            if(ch_i ==0 or ch_i == 3):
+				value_array_1 = temp_array
+            elif(ch_i == 1 or ch_i ==4):
+                value_array_2 = temp_array
+            else:
+                value_array_3 = temp_array
+            
+        # Clear the block RAM again
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        return value_array_1, value_array_2,value_array_3
+        
+    def RITC_storage_read(self,channel,addr_in=0,num_reads=1):
+        addr = bf(0)
+        data = bf(0)
+        value_array = []
+        #print "Reading from channel %d"%channel
+        if (num_reads>=512):
+            print "Too many reads. Block ram only holds 512."
+            return 1
+        
+        if(channel>=7 or channel==3):
+            print "Invalid channel [0,1,2,4,5,6]"
+            return 1
+        elif(channel>3):
+            channel-=1
+                   
+        addr[12:10]=channel
+        addr[9:1]=addr_in
+        
+        # Clear the block RAM
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        
+        # Fill the block RAM
+        self.write(self.map['STORCTRL'],0x1)
+        time.sleep(0.1)
+        
+        # Read the block RAM as many times as needed
+        for read_i in range(num_reads):
+			#self.read(self.map['RITC_STORAGE']
+            value0 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4))
+            time.sleep(0.01)
+            for i in range(8):
+                sample_start = int(3*i)
+                sample_end = int(sample_start+2)
+                value_array.append(value0[sample_end:sample_start])
+            
+            value1 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4)) 
+            time.sleep(0.01)	
+            for i in range(8):
+                sample_start = int(3*i)
+                sample_end = int(sample_start+2)
+                value_array.append(value1[sample_end:sample_start])
+            
+        # Clear the block RAM again
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        return value_array
+        
+		
         
     def scaler_read(self,channel,sample,num_trials=1,wait=100):
         val = 0
@@ -448,7 +558,6 @@ class GLITC:
         val[31] = 1
         self.write(self.map['DPIDELAY'], int(val))
 	    
-    
     def bitslip(self, channel, bit):
         val = bf(self.read(self.map['DPTRAINING']))
         val[22:20] = channel

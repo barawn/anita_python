@@ -11,18 +11,18 @@ import csv
 
 max_dac = 1200
 min_dac = 400
-step_dac = 10
+step_dac = 100
 num_trials = 10
 wait_time = 0.01
 
 file_iterator = "5_set_midpoint_extended_high_end"
 
 
-for GLITC_i in range(3,4):
+for GLITC_i in range(1):
 	
 	GLITC = ttb.setup(GLITC_i)
 	
-	for channel_i in range(1):
+	for channel_i in range(7):
 		
 		if (channel_i==3): continue
 		
@@ -50,7 +50,7 @@ for GLITC_i in range(3,4):
 			plt.xlabel("Input Voltage (DAC Counts)")
 			plt.ylabel("Normalized Output Value")
 			plt.legend()
-			plt.savefig(pp,format='pdf')
+			#plt.savefig(pp,format='pdf')
 			#plt.show()
 			plt.clf()
 			
@@ -62,8 +62,8 @@ for GLITC_i in range(3,4):
 
 		
 		plt.figure(2)
-		plt.savefig('/home/user/data/GLITC_'+str(GLITC_i)+'/threshold_study/G'+str(GLITC_i)+'_Ch'+str(channel_i)+'_input_scan_'+str(file_iterator)+'.png')
-		#plt.show()
+		#plt.savefig('/home/user/data/GLITC_'+str(GLITC_i)+'/threshold_study/G'+str(GLITC_i)+'_Ch'+str(channel_i)+'_input_scan_'+str(file_iterator)+'.png')
+		plt.show()
 		pp.close()
 		plt.clf()
 		
