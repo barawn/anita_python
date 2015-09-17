@@ -337,6 +337,77 @@ class GLITC:
         v2 = bf(self.read(self.map['DPTRAINING']))
         return v2[7:0]
         
+    def RITC_storage_read_6ch(self,addr_in=0,num_reads=1):
+        addr = bf(0)
+        data = bf(0)
+        
+        value_array_1 = []
+        value_array_2 = []
+        value_array_3 = []
+        value_array_4 = []
+        value_array_5 = []
+        value_array_6 = []
+        
+        #print "Reading from channel %d"%channel
+        if (num_reads>=512):
+            print "Too many reads. Please enter number less than 512."
+            return 1
+        
+        
+        start_channel = 0
+        
+                   
+        
+        
+        # Clear the block RAM
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        
+        # Fill the block RAM
+        self.write(self.map['STORCTRL'],0x1)
+        time.sleep(0.1)
+        
+        # Read the block RAM as many times as needed
+        for ch_i in range(start_channel,start_channel+6):
+            addr[12:10]=ch_i
+            addr[9:1]=addr_in
+            temp_array = []
+            self.write(self.map['RITC_STORAGE']+int(addr)*4,0x0)
+            for read_i in range(num_reads):
+			    #self.read(self.map['RITC_STORAGE']
+			    value0 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4))
+			    time.sleep(0.01)
+			    for i in range(8):
+				    sample_start = int(3*i)
+				    sample_end = int(sample_start+2)
+				    temp_array.append(value0[sample_end:sample_start])
+			
+			    value1 = bf(self.read(self.map['RITC_STORAGE']+int(addr)*4)) 
+			    time.sleep(0.01)	
+			    for i in range(8):
+				    sample_start = int(3*i)
+				    sample_end = int(sample_start+2)
+				    temp_array.append(value1[sample_end:sample_start])
+            
+            if(ch_i == 0):
+			    value_array_1 = temp_array
+            elif(ch_i == 1):
+                value_array_2 = temp_array
+            elif(ch_i == 2):
+                value_array_3 = temp_array
+            elif(ch_i == 3):
+			    value_array_4 = temp_array
+            elif(ch_i == 4):
+                value_array_5 = temp_array
+            elif(ch_i == 5):
+                value_array_6 = temp_array
+                
+            #print temp_array[0]
+            
+        # Clear the block RAM again
+        self.write(self.map['STORCTRL'],0x4)
+        time.sleep(0.01)
+        return value_array_1, value_array_2,value_array_3, value_array_4,value_array_5,value_array_6
         
     def RITC_storage_read_3ch(self,RITC,addr_in=0,num_reads=1):
         addr = bf(0)
@@ -348,7 +419,7 @@ class GLITC:
         
         #print "Reading from channel %d"%channel
         if (num_reads>=512):
-            print "Too many reads. Block ram only holds 512."
+            print "Too many reads. Please enter number less than 512."
             return 1
         
         if(RITC<1):

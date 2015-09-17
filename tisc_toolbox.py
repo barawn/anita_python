@@ -1,6 +1,7 @@
+
 import matplotlib.pyplot as plt
 import tisc
-from time import sleep
+from time import sleep, strftime
 import numpy as np
 import TISC_transition_offsets_dictionary as tod
 import TISC_threshold_setting_dictionary as tsd
@@ -12,6 +13,7 @@ import csv
 import matplotlib.gridspec as gridspec
 from scipy.stats import norm
 import math
+import os
 
 def setup(GLITC_n,wait_time=0.01):
 	    
@@ -142,7 +144,7 @@ def set_thresholds(GLITC,GLITC_n,channel,wait=0.01):
 		sleep(wait)
 		
 		
-	return 0	
+	return None	
 
 
 def set_higher_thresholds_to_max(GLITC,GLITC_n,channel,threshold_label):
@@ -295,6 +297,7 @@ def find_threshold_transition_point(sample_array,threshold_array,threshold_label
 			transition_point[sample_i] = threshold_array[i]
 			break
 	return transition_point
+
 
 def find_bit_transition_all_samples(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,threshold_label,sample_number,pp,num_trials=10,wait_time=0.01):
 	
@@ -1488,7 +1491,7 @@ def RITC_storage_impulse_only(GLITC,GLITC_n,channel,ped_dac=730,atten_dac=0,inpu
 	plt.ylabel("Amplitude")
 	plt.legend()
 	plt.grid(True)
-	plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_fft_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
+	#plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_fft_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
 	plt.show()
 	#plt.clf()
 	#plt.close()
@@ -1498,7 +1501,7 @@ def RITC_storage_impulse_only(GLITC,GLITC_n,channel,ped_dac=730,atten_dac=0,inpu
 	return None
 
 # Performs a scan of the pedestal inputs and saves each samples output seperately	
-def pedestal_vs_sample_scan(GLITC,GLITC_n,channel,ped_min=525,ped_max=925,ped_step=1,num_reads=248):
+def pedestal_vs_sample_scan(GLITC,GLITC_n,channel,ped_min=525,ped_max=925,ped_step=1,num_reads=255):
 	
 	samples_per_vcdl = 32
 	num_samples = samples_per_vcdl*num_reads
@@ -1943,15 +1946,17 @@ def perform_GLITC_ops(A,B,C):
 	return correlated_sum, abc_add, abc_add_rounded, abc_square
 
 
-def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0,num_reads=1):
+def RITC_storage_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=16,num_reads=1):
 	# Make sure GLITC is set up!!!!
 	sample_frequency = 2600000000.0
 	time_step = 1.0/sample_frequency
 	samples_per_vcdl = 32
 	num_samples = samples_per_vcdl*num_reads
 	atten_db = atten_dac*0.25
+	datetime = strftime("%Y_%M_%d_%H:%m:%S")
 	
 	reload(tsd)
+	reload(tisc)
 	for ch_i in range(RITC*4,RITC*4+3):
 		print "Setting channel %d thresholds" % ch_i
 		set_thresholds(GLITC,GLITC_n,ch_i)
@@ -1965,7 +1970,7 @@ def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0
 			sleep(0.01)
 			GLITC.atten(ch_i,atten_dac)
 			sleep(5)
-			
+		
 	a_offsets = get_individual_sample_offsets(GLITC_n,RITC*4)
 	b_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+1)
 	c_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+2)
@@ -1974,21 +1979,9 @@ def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0
 	a_sample,b_sample,c_sample = GLITC.RITC_storage_read_3ch(RITC,num_reads=num_reads*2)
 	sleep(0.01)
 
-	a_corrected_sample = a_sample
-	b_corrected_sample = b_sample
-	c_corrected_sample = c_sample
-
-	# 4-3 Glitch correction
-	for i in range(0,len(a_sample)-1):
-		if(a_sample[i]==7 and a_sample[i+1]<=4):
-			#print "Correcting down"
-			a_corrected_sample[i] = 4
-		if(b_sample[i]==7 and b_sample[i+1]<=4):
-			#print "Correcting down"
-			b_corrected_sample[i] = 4
-		if(c_sample[i]==7 and c_sample[i+1]<=4):
-			#print "Correcting down"
-			c_corrected_sample[i] = 4
+	a_corrected_sample = do_glitch_correction(a_sample)
+	b_corrected_sample = do_glitch_correction(b_sample)
+	c_corrected_sample = do_glitch_correction(c_sample)
 
 	# Individual Sample Correction
 	a_corrected_sample = np.array(correct_individual_samples(a_corrected_sample,a_offsets))-3.5
@@ -1998,81 +1991,118 @@ def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0
 	a_sample = np.array(a_sample)-3.5
 	b_sample = np.array(b_sample)-3.5
 	c_sample = np.array(c_sample)-3.5
-
-	correlated_sum,abc_add,abc_add_rounded,abc_square = perform_GLITC_ops(a_corrected_sample,b_corrected_sample,c_corrected_sample)
-	uncorrected_correlated_sum, uncorrected_abc_add, uncorrected_abc_add_rounded,uncorrected_abc_square = perform_GLITC_ops(a_sample,b_sample,c_sample)
-
-	###############################################################
-	# Center window on impulse
-	window_width = 1000
-	available_time_window = time[window_width/2+1:len(abc_add)-window_width/2-1]
-	#available_window = abc_add[window_width/2+1:len(abc_add)-window_width/2-1]
-	available_window = abc_square[window_width/2+1:len(abc_add)-window_width/2-1]
 	
-	high_peak_position = window_width/2+1+available_window.argmax()
-	low_peak_position = window_width/2+1+available_window.argmin()
-	#print time[high_peak_position]
-	#print time[low_peak_position]
+	############################################
+	# Build up matrix to write to file
+	write_matrix = [[0 for x in range(7)] for x in range(num_samples)]
+	file_loc = "/home/user/data/GLITC_%d/impulse_only_study/Event_data"%GLITC_n
+	filename = datetime+"_impulse_only.dat"
 	
-	#if(abs(abc_add[high_peak_position])>=abs(abc_add[low_peak_position])):
-	if(abs(abc_square[high_peak_position])>=abs(abc_square[low_peak_position])):
-		peak_position = high_peak_position
-	else:
-		peak_position = low_peak_position
+	for i in range(num_samples):
+		write_matrix[i][0] = time[i]
+		write_matrix[i][1] = a_sample[i]
+		write_matrix[i][2] = b_sample[i]
+		write_matrix[i][3] = c_sample[i]
+		write_matrix[i][4] = a_corrected_sample[i]
+		write_matrix[i][5] = b_corrected_sample[i]
+		write_matrix[i][6] = c_corrected_sample[i]
+		
+	write_to_file(file_loc,filename,write_matrix)
+	###############################################
 	
-	#impulse_ptp = abc_add[high_peak_position]-abc_add[low_peak_position]
-	impulse_ptp = abc_square[high_peak_position]-abc_square[low_peak_position]
 	
-	#noise_rms = np.sqrt(np.mean(np.square(abc_add[peak_position-window_width/2:peak_position-10])))
-	noise_rms = np.sqrt(np.mean(np.square(abc_square[peak_position-window_width/2:peak_position-100])))
 	
-	SNR = impulse_ptp/(2.0*noise_rms)
-	print "Corrected Waveform Information"
-	print "Impulse Peak-to-Peak: %1.2f"%impulse_ptp
-	print "Peak location in time %1.2fns"%(time[peak_position])
-	print "Noise RMS: %1.2f"%noise_rms
-	print "SNR: %1.2f"%SNR
-	print "Correlated Sum: %1.2f\n"%correlated_sum
-	
-	#plot_array_y = abc_add[peak_position-window_width/2:peak_position+window_width/2]
-	plot_array_y = abc_square[peak_position-window_width/2:peak_position+window_width/2]
-	plot_array_x = time[peak_position-window_width/2:peak_position+window_width/2]
+	# For plotting pure digitization noise
 	plt.figure(figsize=(16,12))
 	#plt.plot(available_time_window,available_window)
-	plt.plot(plot_array_x,plot_array_y)
-	plt.ylim([0,110.5])
+	plt.plot(time,a_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(a_sample))))))
+	plt.plot(time,b_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(b_sample))))))
+	plt.plot(time,c_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(c_sample))))))
+	plt.ylim([-3.5,3.5])
+	plt.title(("GLITC %d, RITC %d, Uncorrected Samples No Inputs ("+datetime+")")%(GLITC_n,RITC))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("RITC_Output [DAC]")
+	plt.legend()
 	#plt.show()
 	plt.clf()
 	plt.close()
 	
-	#uncorrected_impulse_ptp = uncorrected_abc_add[high_peak_position]-uncorrected_abc_add[low_peak_position]
-	uncorrected_impulse_ptp = uncorrected_abc_square[high_peak_position]-uncorrected_abc_square[low_peak_position]
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(time,a_corrected_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(a_corrected_sample))))))
+	plt.plot(time,b_corrected_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(b_corrected_sample))))))
+	plt.plot(time,c_corrected_sample,label=("RMS: %1.2f"%(np.sqrt(np.mean(np.square(c_corrected_sample))))))
+	plt.ylim([-3.5,3.5])
+	plt.title(("GLITC %d, RITC %d, Corrected Samples No Inputs ("+datetime+")")%(GLITC_n,RITC))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("RITC Output [DAC]")
+	plt.legend()
+	plt.show()
+	plt.clf()
+	plt.close()
 	
-	#uncorrected_noise_rms = np.sqrt(np.mean(np.square(uncorrected_abc_add[peak_position-window_width/2:peak_position-10])))
-	uncorrected_noise_rms = np.sqrt(np.mean(np.square(uncorrected_abc_square[peak_position-window_width/2:peak_position-100])))
+	correlated_sum,abc_add,abc_add_rounded,abc_square = perform_GLITC_ops(a_corrected_sample,b_corrected_sample,c_corrected_sample)
+	uncorrected_correlated_sum, uncorrected_abc_add, uncorrected_abc_add_rounded,uncorrected_abc_square = perform_GLITC_ops(a_sample,b_sample,c_sample)
 	
-	uncorrected_SNR = uncorrected_impulse_ptp/(2.0*uncorrected_noise_rms)
+	corrected_add_rounded_peak_position, corrected_add_rounded_impulse_ptp, corrected_add_rounded_impulse_sum, corrected_add_rounded_noise_rms, corrected_add_rounded_noise_sum, corrected_add_rounded_SNR, dummy_sum = do_SNR_analysis(abc_add_rounded,time)
+	corrected_square_peak_position, corrected_square_impulse_ptp, corrected_square_impulse_sum, corrected_square_noise_rms, corrected_square_noise_sum, corrected_square_SNR, corrected_correlated_sum = do_SNR_analysis(abc_square,time)
+	
+	uncorrected_add_rounded_peak_position, uncorrected_add_rounded_impulse_ptp, uncorrected_add_rounded_impulse_sum, uncorrected_add_rounded_noise_rms, uncorrected_add_rounded_noise_sum, uncorrected_add_rounded_SNR, dummy_sum = do_SNR_analysis(uncorrected_abc_add_rounded,time)
+	uncorrected_square_peak_position, uncorrected_square_impulse_ptp,  uncorrected_square_impulse_sum, uncorrected_square_noise_rms, uncorrected_square_noise_sum, uncorrected_square_SNR, uncorrected_correlated_sum = do_SNR_analysis(uncorrected_abc_square,time)
+	
+	print "\nCorrected Waveform Information"
+	print "Impulse Peak-to-Peak: %1.2f"% corrected_square_impulse_ptp
+	print "Peak location in time %1.2fns"% (time[corrected_square_peak_position])
+	print "Noise RMS: %1.2f"% corrected_square_noise_rms
+	print "SNR: %1.2f"% corrected_square_SNR
+	print "Impulse Sum: %1.2f"% corrected_square_impulse_sum
+	print "Noise Sum: %1.2f"% corrected_square_noise_sum
+	print "Correlated Sum: %1.2f\n"% corrected_correlated_sum
+
 	print "Uncorrected Waveform Information"
-	print "Impulse Peak-to-Peak: %1.2f"%uncorrected_impulse_ptp
-	print "Peak location in time %1.2fns"%(time[peak_position])
-	print "Noise RMS: %1.2f"%uncorrected_noise_rms
-	print "SNR: %1.2f"%uncorrected_SNR
-	print "Correlated Sum: %1.2f\n"%uncorrected_correlated_sum
+	print "Impulse Peak-to-Peak: %1.2f"% uncorrected_square_impulse_ptp
+	print "Peak location in time %1.2fns"% (time[uncorrected_square_peak_position])
+	print "Noise RMS: %1.2f"% uncorrected_square_noise_rms
+	print "SNR: %1.2f"% uncorrected_square_SNR
+	print "Impulse Sum: %1.2f"% uncorrected_square_impulse_sum
+	print "Noise Sum: %1.2f"% uncorrected_square_noise_sum
+	print "Correlated Sum: %1.2f\n"% uncorrected_correlated_sum
+	
+	"""
+	window_width=1000
+	#plot_array_y = abc_add_rounded[corrected_square_peak_position-window_width/2:corrected_square_peak_position+window_width/2]
+	plot_array_y = abc_square[corrected_add_rounded_peak_position-window_width/2:corrected_add_rounded_peak_position+window_width/2]
+	plot_array_x = time[corrected_square_peak_position-window_width/2:corrected_square_peak_position+window_width/2]
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(plot_array_x,plot_array_y,label=("SNR: %1.2f"%corrected_square_SNR))
+	plt.ylim([0,110.5])
+	plt.title("GLITC %d, RITC %d, Corrected Power w/ 200mV PTP Impulse"%(GLITC_n,RITC))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("Power [DAC^2]")
+	plt.legend()
+	plt.show()
+	plt.clf()
+	plt.close()
 	
 	plt.figure(figsize=([16,12]))
-	plot_array_y = uncorrected_abc_square[peak_position-window_width/2:peak_position+window_width/2]
-	plot_array_x = time[peak_position-window_width/2:peak_position+window_width/2]
+	plot_array_y = uncorrected_abc_square[uncorrected_square_peak_position-window_width/2:uncorrected_square_peak_position+window_width/2]
+	plot_array_x = time[uncorrected_square_peak_position-window_width/2:uncorrected_square_peak_position+window_width/2]
 	
-	plt.plot(plot_array_x,plot_array_y)
+	plt.plot(plot_array_x,plot_array_y,label=("SNR: %1.2f"%uncorrected_square_SNR))
 	plt.ylim([0,110.5])
-	#plt.show()
+	plt.title("GLITC %d, RITC %d, Uncorrected Power w/ 200mV PTP Impulse"%(GLITC_n,RITC))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("Power [DAC^2]")
+	plt.legend()
+	plt.show()
 	plt.clf()
 	plt.close()
-	
+	"""
 	
 	#######################################################
 	
-	"""
+	
 	# Plot Stuff
 	plot_arraya = a_corrected_sample
 	plot_arrayb = b_corrected_sample
@@ -2080,46 +2110,47 @@ def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0
 	print "Correlation Sum: %1.2f"%correlated_sum
 	
 	plt.figure(figsize=(16,12))
-	plt.plot(time*10**9,plot_arraya)
-	plt.plot(time*10**9,plot_arrayb)
-	plt.plot(time*10**9,plot_arrayc)
-	plt.title("GLITC %d, RITC %d"%(GLITC_n,RITC))
+	plt.plot(time,plot_arraya)
+	plt.plot(time,plot_arrayb)
+	plt.plot(time,plot_arrayc)
+	plt.title(("GLITC %d, RITC %d ("+datetime+")")%(GLITC_n,RITC))
 	plt.xlabel("Time[ns]")
 	plt.ylabel("RITC Output")
 	plt.ylim([-3.5,3.5])
-	#plt.ylim([-10.5,10.5])
-	#plt.show()
+	plt.ylim([-10.5,10.5])
+	plt.show()
 	plt.clf()
 	plt.close()
 	
 	plot_array = abc_add_rounded
 	
 	plt.figure(figsize=(16,12))
-	plt.plot(time*10**9,plot_array)
-	plt.title("GLITC %d, RITC %d ABC Added"%(GLITC_n,RITC))
+	plt.plot(time,plot_array)
+	plt.title(("GLITC %d, RITC %d ABC Added ("+datetime+")")%(GLITC_n,RITC))
 	plt.xlabel("Time[ns]")
 	plt.ylabel("ABC Added Output")
 	plt.ylim([-10.5,10.5])
-	#plt.ylim([-10.5,10.5])
-	#plt.show()
+	plt.ylim([-10.5,10.5])
+	plt.show()
 	plt.clf()
 	plt.close()
 	
 	plot_array = abc_square
 	
 	plt.figure(figsize=(16,12))
-	plt.plot(time*10**9,plot_array)
-	plt.title("GLITC %d, RITC %d Squared"%(GLITC_n,RITC))
+	plt.plot(time,plot_array,label="SNR: %1.2f"%corrected_square_SNR)
+	plt.title(("GLITC %d, RITC %d Squared ("+datetime+")")%(GLITC_n,RITC))
 	plt.xlabel("Time[ns]")
 	plt.ylabel("ABC Added Output")
 	plt.ylim([0,100])
 	#plt.ylim([-10.5,10.5])
-	#plt.show()
+	plt.legend(loc=0)
+	plt.show()
 	plt.clf()
 	plt.close()
 	
 	
-	
+	"""
 	plot_array_average = np.average(plot_array)
 	
 	sample_fft = fft(plot_array-plot_array_average)
@@ -2146,4 +2177,512 @@ def RITC_storage_board_noise_only_3ch(GLITC,GLITC_n,RITC,ped_dac=730,atten_dac=0
 	#del corrected_sample
 	#del sample
 	"""
+	return corrected_square_SNR, corrected_square_impulse_sum, corrected_square_noise_sum, corrected_correlated_sum, uncorrected_square_SNR, uncorrected_square_impulse_sum, uncorrected_square_noise_sum, uncorrected_correlated_sum
+
+
+def sample_correction_comparison(GLITC,GLITC_n,ped_dac=730,atten_dac=16,num_reads=1):
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	datetime = strftime("%Y_%M_%d_%H:%m:%S")
+	
+	mean_offset_max = 2
+	mean_offset_min = -2
+	mean_offset_step = 0.1
+	
+	reload(tsd)
+	reload(tisc)
+	for ch_i in range(7):
+		if(ch_i==3):
+			continue
+		print "Setting channel %d thresholds" % ch_i
+		set_thresholds(GLITC,GLITC_n,ch_i)
+	
+		if(GLITC.dac(ch_i)!=ped_dac):
+			sleep(0.01)
+			GLITC.dac(ch_i,ped_dac)
+			sleep(5)
+			
+		if(GLITC.atten(ch_i)!=atten_dac):
+			sleep(0.01)
+			GLITC.atten(ch_i,atten_dac)
+			sleep(5)
+		
+	a_offsets = get_individual_sample_offsets(GLITC_n,0)
+	b_offsets = get_individual_sample_offsets(GLITC_n,1)
+	c_offsets = get_individual_sample_offsets(GLITC_n,2)
+	d_offsets = get_individual_sample_offsets(GLITC_n,4)
+	e_offsets = get_individual_sample_offsets(GLITC_n,5)
+	f_offsets = get_individual_sample_offsets(GLITC_n,6)
+		
+	time = np.linspace(0,time_step*num_samples,num_samples)*10**9
+	zero_line = np.zeros(num_samples)
+	a_sample,b_sample,c_sample,d_sample,e_sample,f_sample = GLITC.RITC_storage_read_6ch(num_reads=num_reads*2)
+	sleep(0.01)
+
+	a_corrected_sample = do_glitch_correction(a_sample)
+	b_corrected_sample = do_glitch_correction(b_sample)
+	c_corrected_sample = do_glitch_correction(c_sample)
+	d_corrected_sample = do_glitch_correction(d_sample)
+	e_corrected_sample = do_glitch_correction(e_sample)
+	f_corrected_sample = do_glitch_correction(f_sample)
+
+	#print np.array(minimize_RMS_error(a_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step))
+
+	# Mean Correction
+	a_best_RMSE,a_best_offset,a_mean_corrected_sample = minimize_RMS_error(a_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+	b_best_RMSE,b_best_offset,b_mean_corrected_sample = minimize_RMS_error(b_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+	c_best_RMSE,c_best_offset,c_mean_corrected_sample = minimize_RMS_error(c_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+	d_best_RMSE,d_best_offset,d_mean_corrected_sample = minimize_RMS_error(d_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+	e_best_RMSE,e_best_offset,e_mean_corrected_sample = minimize_RMS_error(e_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+	f_best_RMSE,f_best_offset,f_mean_corrected_sample = minimize_RMS_error(f_corrected_sample-3.5,zero_line,mean_offset_min,mean_offset_max,mean_offset_step)
+
+	a_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(a_mean_corrected_sample)))
+	b_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(b_mean_corrected_sample)))
+	c_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(c_mean_corrected_sample)))
+	d_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(d_mean_corrected_sample)))
+	e_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(e_mean_corrected_sample)))
+	f_mean_corrected_sample_rms = np.sqrt(np.mean(np.square(f_mean_corrected_sample)))
+	avg_mean_corrected_rms = (a_mean_corrected_sample_rms+b_mean_corrected_sample_rms+c_mean_corrected_sample_rms+d_mean_corrected_sample_rms+e_mean_corrected_sample_rms+f_mean_corrected_sample_rms)/6.0
+	
+	# INL Correction
+	a_corrected_sample = np.array(correct_individual_samples(a_corrected_sample,a_offsets))-3.5
+	b_corrected_sample = np.array(correct_individual_samples(b_corrected_sample,b_offsets))-3.5
+	c_corrected_sample = np.array(correct_individual_samples(c_corrected_sample,c_offsets))-3.5
+	d_corrected_sample = np.array(correct_individual_samples(d_corrected_sample,d_offsets))-3.5
+	e_corrected_sample = np.array(correct_individual_samples(e_corrected_sample,e_offsets))-3.5
+	f_corrected_sample = np.array(correct_individual_samples(f_corrected_sample,f_offsets))-3.5
+	
+	a_corrected_sample_rms = np.sqrt(np.mean(np.square(a_corrected_sample)))
+	b_corrected_sample_rms = np.sqrt(np.mean(np.square(b_corrected_sample)))
+	c_corrected_sample_rms = np.sqrt(np.mean(np.square(c_corrected_sample)))
+	d_corrected_sample_rms = np.sqrt(np.mean(np.square(d_corrected_sample)))
+	e_corrected_sample_rms = np.sqrt(np.mean(np.square(e_corrected_sample)))
+	f_corrected_sample_rms = np.sqrt(np.mean(np.square(f_corrected_sample)))
+	avg_corrected_rms = (a_corrected_sample_rms+b_corrected_sample_rms+c_corrected_sample_rms+d_corrected_sample_rms+e_corrected_sample_rms+f_corrected_sample_rms)/6.0
+	
+	a_sample = np.array(a_sample)-3.5
+	b_sample = np.array(b_sample)-3.5
+	c_sample = np.array(c_sample)-3.5
+	d_sample = np.array(d_sample)-3.5
+	e_sample = np.array(e_sample)-3.5
+	f_sample = np.array(f_sample)-3.5
+	
+	a_sample_rms = np.sqrt(np.mean(np.square(a_sample)))
+	b_sample_rms = np.sqrt(np.mean(np.square(b_sample)))
+	c_sample_rms = np.sqrt(np.mean(np.square(c_sample)))
+	d_sample_rms = np.sqrt(np.mean(np.square(d_sample)))
+	e_sample_rms = np.sqrt(np.mean(np.square(e_sample)))
+	f_sample_rms = np.sqrt(np.mean(np.square(f_sample)))
+	avg_sample_rms = (a_sample_rms+b_sample_rms+c_sample_rms+d_sample_rms+e_sample_rms+f_sample_rms)/6.0
+	
+	"""
+	############################################
+	# Build up matrix to write to file
+	write_matrix = [[0 for x in range(7)] for x in range(num_samples)]
+	file_loc = "/home/user/data/GLITC_%d/impulse_only_study/Event_data"%GLITC_n
+	filename = datetime+"_impulse_only.dat"
+	
+	for i in range(num_samples):
+		write_matrix[i][0] = time[i]
+		write_matrix[i][1] = a_sample[i]
+		write_matrix[i][2] = b_sample[i]
+		write_matrix[i][3] = c_sample[i]
+		write_matrix[i][4] = a_corrected_sample[i]
+		write_matrix[i][5] = b_corrected_sample[i]
+		write_matrix[i][6] = c_corrected_sample[i]
+		
+	write_to_file(file_loc,filename,write_matrix)
+	###############################################
+	"""
+	
+	
+	# For plotting noise
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(time,a_sample,label=("RMS: %1.2f"%(a_sample_rms)))
+	plt.plot(time,b_sample,label=("RMS: %1.2f"%(b_sample_rms)))
+	plt.plot(time,c_sample,label=("RMS: %1.2f"%(c_sample_rms)))
+	plt.plot(time,d_sample,label=("RMS: %1.2f"%(d_sample_rms)))
+	plt.plot(time,e_sample,label=("RMS: %1.2f"%(e_sample_rms)))
+	plt.plot(time,f_sample,label=("RMS: %1.2f"%(f_sample_rms)))
+	plt.ylim([-3.5,3.5])
+	plt.title(("GLITC %d, Uncorrected Thermal Noise ("+datetime+")")%(GLITC_n))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("RITC_Output [DAC]")
+	plt.legend()
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(time,a_mean_corrected_sample,label=("RMS: %1.2f"%(a_mean_corrected_sample_rms)))
+	plt.plot(time,b_mean_corrected_sample,label=("RMS: %1.2f"%(b_mean_corrected_sample_rms)))
+	plt.plot(time,c_mean_corrected_sample,label=("RMS: %1.2f"%(c_mean_corrected_sample_rms)))
+	plt.plot(time,d_mean_corrected_sample,label=("RMS: %1.2f"%(d_mean_corrected_sample_rms)))
+	plt.plot(time,e_mean_corrected_sample,label=("RMS: %1.2f"%(e_mean_corrected_sample_rms)))
+	plt.plot(time,f_mean_corrected_sample,label=("RMS: %1.2f"%(f_mean_corrected_sample_rms)))
+	plt.ylim([-3.5,3.5])
+	plt.title(("GLITC %d, Mean Corrected Thermal Noise ("+datetime+")")%(GLITC_n))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("RITC_Output [DAC]")
+	plt.legend()
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	plt.figure(figsize=(16,12))
+	#plt.plot(available_time_window,available_window)
+	plt.plot(time,a_corrected_sample,label=("RMS: %1.2f"%(a_corrected_sample_rms)))
+	plt.plot(time,b_corrected_sample,label=("RMS: %1.2f"%(b_corrected_sample_rms)))
+	plt.plot(time,c_corrected_sample,label=("RMS: %1.2f"%(c_corrected_sample_rms)))
+	plt.plot(time,d_corrected_sample,label=("RMS: %1.2f"%(d_corrected_sample_rms)))
+	plt.plot(time,e_corrected_sample,label=("RMS: %1.2f"%(e_corrected_sample_rms)))
+	plt.plot(time,f_corrected_sample,label=("RMS: %1.2f"%(f_corrected_sample_rms)))
+	plt.ylim([-3.5,3.5])
+	plt.title(("GLITC %d, INL Corrected Thermal Noise ("+datetime+")")%(GLITC_n))
+	plt.xlabel("time [ns]") 
+	plt.ylabel("RITC Output [DAC]")
+	plt.legend()
+	#plt.show()
+	plt.clf()
+	plt.close()
+	
+	print "Average uncorrected RMS: %1.2f"%avg_sample_rms
+	print "Average Mean corrected RMS: %1.2f"%avg_mean_corrected_rms
+	print "Average INL corrected RMS: %1.2f"%avg_corrected_rms
+	print "Mean correction percent improvment: %1.2f"%(100*(avg_sample_rms-avg_mean_corrected_rms)/avg_sample_rms)
+	print "INL correction percent improvment: %1.2f"%(100*(avg_sample_rms-avg_corrected_rms)/avg_sample_rms)
+	
+	
+	#plot_array_average = np.average(plot_array)
+	
+	a_power = np.square(a_corrected_sample)
+	
+	sample_fft = fft(a_power)
+	print len(sample_fft)
+	print num_samples
+	#sample_fft/=num_samples/2
+	frequency = np.linspace(0.0,1.0/(2.0*time_step),num_samples/2)
+	
+	max_frequency_bin = np.argmax(2.0/num_samples*np.abs(sample_fft[1:num_samples/2]))
+	#print frequency[max_frequency_bin]
+	bins = np.linspace(0,2000000000,10000000)
+	
+	plt.figure(figsize=[16,12])
+	#plt.axvline(x=input_freq,linestyle="--",color='r',label=("Input Frequency: %dMHz"%(input_freq/1000000)))
+	#plt.plot(frequency/10**6,2.0/num_samples*np.abs(sample_fft[0:num_samples/2]))
+	plt.hist(2.0/num_samples*np.abs(sample_fft[0:num_samples/2]),bins)
+	#plt.ylim((0,0.5))
+	plt.title("Thermal Power Spectrum")
+	#plt.title("Impulse Test")
+	plt.xlabel("Frequency [MHz]")
+	plt.ylabel("Amplitude")
+	plt.legend()
+	plt.grid(True)
+	#plt.savefig(("/home/user/data/GLITC_%d/impulse_only_study/G%d_Ch%d_%dmV_p2p_impulse_fft_atten_%1.2fdB.png" % (GLITC_n,GLITC_n,channel,input_amp_p2p,atten_db)))
+	plt.show()
+	#plt.clf()
+	#plt.close()
+	
+	return None
+
+
+def RITC_storage_3ch_save_datatable(GLITC,GLITC_n,RITC, input_SNR, ped_dac=730,atten_dac=16,num_reads=255,num_trials=1):
+
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	
+	
+	reload(tsd)
+	reload(tisc)
+	for ch_i in range(RITC*4,RITC*4+3):
+		print "Setting channel %d thresholds" % ch_i
+		set_thresholds(GLITC,GLITC_n,ch_i)
+	
+		if(GLITC.dac(ch_i)!=ped_dac):
+			sleep(0.01)
+			GLITC.dac(ch_i,ped_dac)
+			sleep(5)
+			
+		if(GLITC.atten(ch_i)!=atten_dac):
+			sleep(0.01)
+			GLITC.atten(ch_i,atten_dac)
+			sleep(5)
+		
+	a_offsets = get_individual_sample_offsets(GLITC_n,RITC*4)
+	b_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+1)
+	c_offsets = get_individual_sample_offsets(GLITC_n,RITC*4+2)
+		
+	for trial in range(num_trials):	
+		print "Starting trial # %d"%trial
+		
+		datetime = strftime("%Y_%M_%d_%H:%m:%S")
+		
+		time = np.linspace(0,time_step*num_samples,num_samples)*10**9
+		a_sample,b_sample,c_sample = GLITC.RITC_storage_read_3ch(RITC,num_reads=num_reads*2)
+		sleep(0.01)
+
+		a_corrected_sample = do_glitch_correction(a_sample)
+		b_corrected_sample = do_glitch_correction(b_sample)
+		c_corrected_sample = do_glitch_correction(c_sample)
+
+		# Individual Sample Correction
+		a_corrected_sample = np.array(correct_individual_samples(a_corrected_sample,a_offsets))-3.5
+		b_corrected_sample = np.array(correct_individual_samples(b_corrected_sample,b_offsets))-3.5
+		c_corrected_sample = np.array(correct_individual_samples(c_corrected_sample,c_offsets))-3.5
+	
+		a_sample = np.array(a_sample)-3.5
+		b_sample = np.array(b_sample)-3.5
+		c_sample = np.array(c_sample)-3.5
+		
+		############################################
+		# Build up matrix to write to file
+		write_matrix = [[0 for x in range(7)] for x in range(num_samples+1)]
+		
+		#correlated_sum,abc_add,abc_add_rounded,abc_square = perform_GLITC_ops(a_corrected_sample,b_corrected_sample,c_corrected_sample)
+		#corrected_square_peak_position, corrected_square_impulse_ptp, corrected_square_impulse_sum, corrected_square_noise_rms, corrected_square_noise_sum, corrected_square_SNR, corrected_correlated_sum = do_SNR_analysis(abc_square,time)
+		
+		file_loc = "/home/user/data/GLITC_%d/Pulse_data/SNR_%1.2f"%(GLITC_n, input_SNR)
+		if not os.path.exists(file_loc):
+			os.makedirs(file_loc)
+		filename = "SNR"+str(input_SNR)+"_trial_"+str(trial)+".dat"
+		
+		write_matrix[0] = ["# "+datetime,"GLITC #"+str(GLITC_n),"RITC #"+str(RITC),"Ped Dac: "+str(ped_dac),"Atten_dac: "+str(atten_dac),0,0,0]
+
+		for i in range(num_samples):
+			write_matrix[i+1][0] = time[i]
+			write_matrix[i+1][1] = a_sample[i]
+			write_matrix[i+1][2] = b_sample[i]
+			write_matrix[i+1][3] = c_sample[i]
+			write_matrix[i+1][4] = a_corrected_sample[i]
+			write_matrix[i+1][5] = b_corrected_sample[i]
+			write_matrix[i+1][6] = c_corrected_sample[i]
+			
+
+		write_to_file(file_loc,filename,write_matrix)
+		
+	return None#corrected_square_SNR, corrected_square_impulse_sum, corrected_square_noise_sum, corrected_correlated_sum
+
+
+
+def RITC_storage_6ch_save_datatable(GLITC,GLITC_n, input_atten, ped_dac=730,atten_dac=16,num_reads=255,num_trials=1):
+
+	# Make sure GLITC is set up!!!!
+	sample_frequency = 2600000000.0
+	time_step = 1.0/sample_frequency
+	samples_per_vcdl = 32
+	num_samples = samples_per_vcdl*num_reads
+	atten_db = atten_dac*0.25
+	
+	
+	reload(tsd)
+	reload(tisc)
+	for ch_i in range(7):
+		if (ch_i ==3):
+			continue
+		print "Setting channel %d thresholds" % ch_i
+		set_thresholds(GLITC,GLITC_n,ch_i)
+	
+		if(GLITC.dac(ch_i)!=ped_dac):
+			sleep(0.01)
+			GLITC.dac(ch_i,ped_dac)
+			sleep(5)
+			
+		if(GLITC.atten(ch_i)!=atten_dac):
+			sleep(0.01)
+			GLITC.atten(ch_i,atten_dac)
+			sleep(5)
+		
+	a_offsets = get_individual_sample_offsets(GLITC_n,0)
+	b_offsets = get_individual_sample_offsets(GLITC_n,1)
+	c_offsets = get_individual_sample_offsets(GLITC_n,2)
+	
+	d_offsets = get_individual_sample_offsets(GLITC_n,4)
+	e_offsets = get_individual_sample_offsets(GLITC_n,5)
+	f_offsets = get_individual_sample_offsets(GLITC_n,6)
+		
+	for trial in range(num_trials):	
+		print "Starting trial # %d"%trial
+		
+		datetime = strftime("%Y_%M_%d_%H:%m:%S")
+		
+		time = np.linspace(0,time_step*num_samples,num_samples)*10**9
+		a_sample,b_sample,c_sample,d_sample,e_sample,f_sample = GLITC.RITC_storage_read_6ch(num_reads=num_reads*2)
+		sleep(0.01)
+
+		a_corrected_sample = do_glitch_correction(a_sample)
+		b_corrected_sample = do_glitch_correction(b_sample)
+		c_corrected_sample = do_glitch_correction(c_sample)
+		d_corrected_sample = do_glitch_correction(d_sample)
+		e_corrected_sample = do_glitch_correction(e_sample)
+		f_corrected_sample = do_glitch_correction(f_sample)
+
+		# Individual Sample Correction
+		a_corrected_sample = np.array(correct_individual_samples(a_corrected_sample,a_offsets))-3.5
+		b_corrected_sample = np.array(correct_individual_samples(b_corrected_sample,b_offsets))-3.5
+		c_corrected_sample = np.array(correct_individual_samples(c_corrected_sample,c_offsets))-3.5
+		d_corrected_sample = np.array(correct_individual_samples(d_corrected_sample,d_offsets))-3.5
+		e_corrected_sample = np.array(correct_individual_samples(e_corrected_sample,e_offsets))-3.5
+		f_corrected_sample = np.array(correct_individual_samples(f_corrected_sample,f_offsets))-3.5
+	
+		a_sample = np.array(a_sample)-3.5
+		b_sample = np.array(b_sample)-3.5
+		c_sample = np.array(c_sample)-3.5
+		d_sample = np.array(d_sample)-3.5
+		e_sample = np.array(e_sample)-3.5
+		f_sample = np.array(f_sample)-3.5
+		
+		############################################
+		# Build up matrix to write to file
+		write_matrix = [[0 for x in range(13)] for x in range(num_samples+1)]
+		
+		#correlated_sum,abc_add,abc_add_rounded,abc_square = perform_GLITC_ops(a_corrected_sample,b_corrected_sample,c_corrected_sample)
+		#corrected_square_peak_position, corrected_square_impulse_ptp, corrected_square_impulse_sum, corrected_square_noise_rms, corrected_square_noise_sum, corrected_square_SNR, corrected_correlated_sum = do_SNR_analysis(abc_square,time)
+		
+		file_loc = "/home/user/data/GLITC_%d/Pulse_data/Atten_%1.2f"%(GLITC_n, input_atten)
+		if not os.path.exists(file_loc):
+			os.makedirs(file_loc)
+		filename = "SNR"+str(input_SNR)+"_trial_"+str(trial)+".dat"
+		
+		write_matrix[0] = ["# "+datetime,"GLITC #"+str(GLITC_n),"Ped Dac: "+str(ped_dac),"Atten_dac: "+str(atten_dac),0,0,0,0,0,0,0,0,0]
+
+		for i in range(num_samples):
+			write_matrix[i+1][0] = time[i]
+			write_matrix[i+1][1] = a_sample[i]
+			write_matrix[i+1][2] = b_sample[i]
+			write_matrix[i+1][3] = c_sample[i]
+			write_matrix[i+1][4] = d_sample[i]
+			write_matrix[i+1][5] = e_sample[i]
+			write_matrix[i+1][6] = f_sample[i]
+			write_matrix[i+1][7] = a_corrected_sample[i]
+			write_matrix[i+1][8] = b_corrected_sample[i]
+			write_matrix[i+1][9] = c_corrected_sample[i]
+			write_matrix[i+1][10] = d_corrected_sample[i]
+			write_matrix[i+1][11] = e_corrected_sample[i]
+			write_matrix[i+1][12] = f_corrected_sample[i]
+			
+
+		write_to_file(file_loc,filename,write_matrix)
+		
+	return None#corrected_square_SNR, corrected_square_impulse_sum, corrected_square_noise_sum, corrected_correlated_sum
+
+
+def do_SNR_analysis(sample_array,time,window_width=1000,sum_width=182):
+	
+	sample_length = len(sample_array)
+	
+	available_time_window = np.array(time[window_width/2+1:sample_length-window_width/2-1])
+	
+	available_window = np.array(sample_array[window_width/2+1:sample_length-window_width/2-1])
+	#print sample_array
+	high_peak_position = window_width/2+1+available_window.argmax()
+	low_peak_position = window_width/2+1+available_window.argmin()
+	
+	
+	if(abs(sample_array[high_peak_position])>=abs(sample_array[low_peak_position])):
+		peak_position = high_peak_position
+	else:
+		peak_position = low_peak_position
+	
+	impulse_ptp = sample_array[high_peak_position]-sample_array[low_peak_position]
+	impulse_sum = np.sum(sample_array[peak_position-sum_width/2:peak_position+sum_width/2])
+	
+	
+	noise_rms = np.sqrt(np.mean(np.square(sample_array[peak_position-window_width/2:peak_position-100])))
+	noise_sum = np.sum(sample_array[peak_position-100-sum_width:peak_position-100])
+	SNR = impulse_ptp/(2*noise_rms)
+	
+	sample_sum = np.sum(sample_array[peak_position-window_width/2:peak_position+window_width/2])
+	
+	return peak_position,impulse_ptp,impulse_sum,noise_rms,noise_sum,SNR,sample_sum
+
+
+def do_glitch_correction(sample):
+	
+	return_sample = np.copy(sample)
+	
+	# 4-3 Glitch correction
+	for i in range(0,len(sample)-1):
+		if(sample[i]==7 and sample[i+1]<=4):
+			return_sample[i] = 4
+	return return_sample
+
+
+def run_correction_vs_noncorrection_study(GLITC,GLITC_n,RITC,num_trials=2,num_reads=100):
+
+	c_sqr_SNR = np.zeros(num_trials)
+	c_sqr_imp_sum = np.zeros(num_trials)
+	c_sqr_noise_sum = np.zeros(num_trials)
+	c_sqr_corr_sum = np.zeros(num_trials)
+	uc_sqr_SNR = np.zeros(num_trials)
+	uc_sqr_imp_sum = np.zeros(num_trials)
+	uc_sqr_noise_sum = np.zeros(num_trials)
+	uc_sqr_corr_sum = np.zeros(num_trials)
+
+	for i in range(num_trials):
+		print "Running trial %d"%i
+		c_sqr_SNR[i],c_sqr_imp_sum[i],c_sqr_noise_sum[i],c_sqr_corr_sum[i],uc_sqr_SNR[i],uc_sqr_imp_sum[i],uc_sqr_noise_sum[i],uc_sqr_corr_sum[i] = RITC_storage_impulse_only_3ch(GLITC,GLITC_n,RITC,num_reads=num_reads)
+		
+	c_sqr_SNR_mean = np.mean(c_sqr_SNR)
+	c_sqr_imp_sum_mean = np.mean(c_sqr_imp_sum)
+	c_sqr_noise_sum_mean = np.mean(c_sqr_noise_sum)
+	c_sqr_corr_sum_mean = np.mean(c_sqr_corr_sum)
+	c_sqr_SNR_std = np.std(c_sqr_SNR)
+	c_sqr_imp_sum_std = np.std(c_sqr_imp_sum)
+	c_sqr_noise_sum_std = np.std(c_sqr_noise_sum)
+	c_sqr_corr_sum_std= np.std(c_sqr_corr_sum)
+
+	uc_sqr_SNR_mean = np.mean(uc_sqr_SNR)
+	uc_sqr_imp_sum_mean = np.mean(uc_sqr_imp_sum)
+	uc_sqr_noise_sum_mean = np.mean(uc_sqr_noise_sum)
+	uc_sqr_corr_sum_mean = np.mean(uc_sqr_corr_sum)
+	uc_sqr_SNR_std = np.std(uc_sqr_SNR)
+	uc_sqr_imp_sum_std = np.std(uc_sqr_imp_sum)
+	uc_sqr_noise_sum_std = np.std(uc_sqr_noise_sum)
+	uc_sqr_corr_sum_std= np.std(uc_sqr_corr_sum)
+	
+	print "Corrected SNR: %1.2f +- %1.2f"%(c_sqr_SNR_mean,c_sqr_SNR_std)
+	print "Uncorrected SNR: %1.2f +- %1.2f\n"%(uc_sqr_SNR_mean,uc_sqr_SNR_std)
+	print "Corrected Impulse Sum: %1.2f +- %1.2f"%(c_sqr_imp_sum_mean,c_sqr_imp_sum_std)
+	print "Uncorrected Impulse Sum: %1.2f +- %1.2f\n"%(uc_sqr_imp_sum_mean,uc_sqr_imp_sum_std)
+	print "Corrected Noise Sum: %1.2f +- %1.2f"%(c_sqr_noise_sum_mean,c_sqr_noise_sum_std)
+	print "Uncorrected Noise Sum: %1.2f +- %1.2f\n"%(uc_sqr_noise_sum_mean,uc_sqr_noise_sum_std)
+	print "Corrected Correlation Sum: %1.2f +- %1.2f"%(c_sqr_corr_sum_mean,c_sqr_corr_sum_std)
+	print "Uncorrected Correlation Sum: %1.2f +- %1.2f\n"%(uc_sqr_corr_sum_mean,uc_sqr_corr_sum_std)
+
+	
+def run_individual_sample_correction_study():
+	
+	for GLITC_n in range(3,4):
+		GLITC = setup(GLITC_n)
+		
+		for ch_i in range(7):
+			
+			if(ch_i==3):
+				continue
+			
+			set_thresholds(GLITC,GLITC_n,ch_i)
+			
+			pedestal_vs_sample_scan(GLITC,GLITC_n,ch_i)
+	
+	return None
+
+
+def write_to_file(file_loc,filename,array):
+		
+	with open((str(file_loc)+'/'+str(filename)),'wb') as f:
+		writer = csv.writer(f)
+		for i in range(len(array)):
+			writer.writerow(array[i])	
+	
+		
 	return None
