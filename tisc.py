@@ -2,6 +2,8 @@ import ocpci
 import struct
 import sys
 import time
+from bf import *
+import spi
 
 #
 # Bitfield manipulation. Note that ordering
@@ -9,40 +11,19 @@ import time
 # (largest first) for easy compatibility
 #
 
-class bf(object):
-    def __init__(self, value=0):
-        self._d = int(value)
-    
-    def __getitem__(self, index):
-        return (self._d >> index) & 1
-    
-    def __setitem__(self,index,value):
-        value = (value & 1L)<<index
-        mask = (1L)<<index
-        self._d = (self._d & ~mask) | value
-    
-    def __getslice__(self, start, end):
-        if start > end:
-            tmp = end
-            end = start
-            start = tmp
-        mask = (((1L)<<(end+1))-1) >> start
-        return (self._d >> start) & mask
-    
-    def __setslice__(self, start, end, value):
-        if start > end:
-            tmp = end
-            end = start
-            start = tmp
-        mask = (((1L)<<(end+1))-1) >> start
-        value = (value & mask) << start
-        mask = mask << start
-        self._d = (self._d & ~mask) | value
-        return (self._d >> start) & mask
-    
-    def __int__(self):
-        return self._d
 
+class mapDevice:
+    def __init__(self):
+        return
+    def regprint(self, name):
+        print hex(self.read(self.map[name]))
+    
+    def regwrite(self, name, value):
+        self.write(self.map[name], value)
+    
+    def regread(self, name):
+        return self.read(self.map[name])
+		
 class PicoBlaze:
     instr0_map = { (0x00>>1) : "LOAD",
                    (0x16>>1) : "STAR",
@@ -171,6 +152,7 @@ class GLITC:
     map = { 'ident'          : 0x000000,
             'ver'            : 0x000004,
             'control'        : 0x000008,
+            'SERIAL'         : 0x00000C,
             'DPCTRL0'        : 0x000080,
             'DPCTRL1'        : 0x000084,
             'DPTRAINING'     : 0x000088,
@@ -185,6 +167,12 @@ class GLITC:
             'settings_sc'    : 0x000178,
             'settings_pb'    : 0x00017C,
             'phasescan_pb'   : 0x000058,
+            'GICTRL0'        : 0x000180,
+            'GICTRL1'        : 0x000184,
+            'GITRAINUP'      : 0x000188,
+            'GITRAINDOWN'    : 0x00018C,
+            'STORCTL'        : 0x0000C0,
+            'SAMPDATA'       : 0x004000,
             'RITC_STORAGE'   : 0x008000}
             
     def __init__(self, dev, base):
@@ -270,7 +258,16 @@ class GLITC:
         else:
             val[30] = 1
         self.write(self.map['DPCTRL1'], int(val))
-        
+
+    def counters(self):
+        val = bf(0)
+        for i in range(6):
+            val[19:16] = i
+            self.write(self.map['DPCOUNTER'], int(val))
+            time.sleep(0.1)
+            v2 = bf(self.read(self.map['DPCOUNTER']))
+            print "Channel %d: %d" % (i, v2[15:0])
+
     def vcdl(self, channel, value = None):
         if channel > 1:
             print "Illegal RITC channel (%d)" % channel
@@ -302,15 +299,6 @@ class GLITC:
             val[13] = 1
             val[12:8] = value
         self.write(self.map['DPCTRL1'], int(val))
-
-    def counters(self):
-        val = bf(0)
-        for i in range(6):
-            val[19:16] = i
-            self.write(self.map['DPCOUNTER'], int(val))
-            time.sleep(0.1)
-            v2 = bf(self.read(self.map['DPCOUNTER']))
-            print "Channel %d: %d" % (i, v2[15:0])
             
     def train_latch_ctrl(self, en):
         val = bf(self.read(self.map['DPTRAINING']))
@@ -336,7 +324,8 @@ class GLITC:
         self.write(self.map['DPTRAINING'], int(val))
         v2 = bf(self.read(self.map['DPTRAINING']))
         return v2[7:0]
-        
+    
+    #This may be outdated and no longer work?
     def RITC_storage_read_6ch(self,addr_in=0,num_reads=1):
         addr = bf(0)
         data = bf(0)
@@ -408,7 +397,8 @@ class GLITC:
         self.write(self.map['STORCTRL'],0x4)
         time.sleep(0.01)
         return value_array_1, value_array_2,value_array_3, value_array_4,value_array_5,value_array_6
-        
+    
+    #This may be outdated?
     def RITC_storage_read_3ch(self,RITC,addr_in=0,num_reads=1):
         addr = bf(0)
         data = bf(0)
@@ -470,7 +460,8 @@ class GLITC:
         self.write(self.map['STORCTRL'],0x4)
         time.sleep(0.01)
         return value_array_1, value_array_2,value_array_3
-        
+    
+    #This may be outdated
     def RITC_storage_read(self,channel,addr_in=0,num_reads=1):
         addr = bf(0)
         data = bf(0)
@@ -519,26 +510,6 @@ class GLITC:
         time.sleep(0.01)
         return value_array
         
-		
-        
-    def scaler_read(self,channel,sample,num_trials=1,wait=100):
-        val = 0
-        for trail_i in range(num_trials):
-            v = self.train_read(channel, sample, sample_view=1)
-            for i in range(wait):
-                val_temp = bf(self.read(self.map['DPSCALER']))
-                if(val_temp[16]):
-                    val += int(val_temp[15:0])
-                    break
-                
-        val /=(1023.0*num_trials)
-        return val#[15:0]
-        
-    def scaler_read_all(self,channel,num_trials=1,wait=100):
-        value_array = [0]*32
-        for sample_i in range(32):
-            value_array[sample_i] = self.scaler_read(channel,sample_i,num_trials,wait)
-        return value_array
 
     def eye_autotune_all(self):
         for i in (0,1,2,4,5,6):
@@ -549,33 +520,19 @@ class GLITC:
     def eye_autotune(self, channel, bit, verbose=1):
         eyevars = self.eye_scan(channel, bit, verbose)
         if eyevars[0] == 0:
-            print "'CA' Eye start not found, checking next eye"
-            VCDL_delay = (eyevars[1]/2)
-            if (channel <= 2 ):
-			    RITC = 0
-            if (channel > 2):
-		        RITC = 1
-            self.delay_VCDL(RITC,int(VCDL_delay))
-            eyevars = self.eye_scan(channel,bit,verbose)
-            if eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
-                print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
-                return -1
-            eyecenter = 2*VCDL_delay - (eyevars[1] - eyevars[0])/2
-            self.delay(channel, bit, int(eyecenter))
-            self.delay_VCDL(RITC,0)
-            eyevars = self.eye_scan(channel, bit, verbose)
-        elif eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
+            print "eye_autotune error: eye start not found (%2.2x %2.2x %2.2x)" % eyevars
+            return -1
+        elif eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65:
             print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
             return -1
-        else:
-            eyecenter = (eyevars[1] + eyevars[0])/2
-            self.delay(channel, bit, int(eyecenter))
+        eyecenter = (eyevars[1] + eyevars[0])/2
+        self.delay(channel, bit, int(eyecenter))
         bitslip_count = 0
-        if eyevars[2] == 0x2B or eyevars[2] == 0xB2:
+        if eyevars[2] == 0x2B:
             bitslip_count = 2
-        elif eyevars[2] == 0x65 or eyevars[2] == 0x59:
-            bitslip_count = 1
         elif eyevars[2] == 0x95:
+            bitslip_count = 1
+        elif eyevars[2] == 0x65:
             bitslip_count = 3
         if verbose == 1:
             print "eye_autotune: setting to delay %d" % eyecenter
@@ -619,7 +576,99 @@ class GLITC:
                 old_train = new_train
         if verbose == 1:
             print "Ch%2.2d Bit %2.2d Eye scan: (%2.2d - %2.2d) [%2.2X]" % (channel, bit, eye_start, eye_stop, train_in_eye)
-        return (eye_start, eye_stop, train_in_eye)
+        return (eye_start, eye_stop, train_in_eye)		
+
+    '''
+    #Thi was the old scaler read function, 
+	#updated function below, but lacking num_tirals and wait functionallity	
+    def scaler_read(self,channel,sample,num_trials=1,wait=100):
+        val = 0
+        for trail_i in range(num_trials):
+            v = self.train_read(channel, sample, sample_view=1)
+            for i in range(wait):
+                val_temp = bf(self.read(self.map['DPSCALER']))
+                if(val_temp[16]):
+                    val += int(val_temp[15:0])
+                    break
+                
+        val /=(1023.0*num_trials)
+        return val#[15:0]
+    '''
+    def scaler_read(self, channel, sample, dontreset=False):
+        val = bf(self.read(self.map['DPTRAINING']))
+        # this part is complicated
+        bfsamp = bf(sample)
+        if val[6:4] == channel and val[3:1] == bfsamp[4:2] and not dontreset:
+            # we already had these settings, reset it
+            val[8] = 1
+            val[0] = bfsamp[1]
+        else:
+            val[6:4] = channel
+            val[3:0] = bfsamp[4:1]
+			
+        self.write(self.map['DPTRAINING'], int(val))
+        val = bf(self.read(self.map['DPTRAINING']))
+        while not val[8]:
+            val = bf(self.read(self.map['DPTRAINING']))
+            
+        rdval = bf(self.read(self.map['DPSCALER']))
+        if bfsamp[0]:
+            return rdval[11:0]
+        else:
+            return rdval[27:16]
+			
+	#Needs to be tested
+    def scaler_read_all(self,channel,num_trials=1,wait=100):
+        value_array = [0]*32
+		value_array_temp = [0]*32
+		for trial_i in range(num_trials):
+		    for sample_i in range(32):
+                value_array_temp[sample_i] = self.scaler_read(channel,sample_i, True)
+				value_array[sample_i] += value_array_temp[sample_i]
+		value_array /= (1024.0*num_trials)
+        return value_array
+
+    '''
+    #Old version of eye_autotune    
+    # I should believe in exceptions, really I should.
+    def eye_autotune(self, channel, bit, verbose=1):
+        eyevars = self.eye_scan(channel, bit, verbose)
+        if eyevars[0] == 0:
+            print "'CA' Eye start not found, checking next eye"
+            VCDL_delay = (eyevars[1]/2)
+            if (channel <= 2 ):
+			    RITC = 0
+            if (channel > 2):
+		        RITC = 1
+            self.delay_VCDL(RITC,int(VCDL_delay))
+            eyevars = self.eye_scan(channel,bit,verbose)
+            if eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
+                print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
+                return -1
+            eyecenter = 2*VCDL_delay - (eyevars[1] - eyevars[0])/2
+            self.delay(channel, bit, int(eyecenter))
+            self.delay_VCDL(RITC,0)
+            eyevars = self.eye_scan(channel, bit, verbose)
+        elif eyevars[2] != 0x2B and eyevars[2] != 0x95 and eyevars[2] != 0xCA and eyevars[2] != 0x65 and eyevars[2] != 0xB2 and eyevars[2] != 0x59:
+            print "eye_autotune error: unknown value in eye (%2.2x %2.2x %2.2x)" % eyevars
+            return -1
+        else:
+            eyecenter = (eyevars[1] + eyevars[0])/2
+            self.delay(channel, bit, int(eyecenter))
+        bitslip_count = 0
+        if eyevars[2] == 0x2B or eyevars[2] == 0xB2:
+            bitslip_count = 2
+        elif eyevars[2] == 0x65 or eyevars[2] == 0x59:
+            bitslip_count = 1
+        elif eyevars[2] == 0x95:
+            bitslip_count = 3
+        if verbose == 1:
+            print "eye_autotune: setting to delay %d" % eyecenter
+            print "eye_autotune: bitslipping %d time%s" % ( bitslip_count, ("" if bitslip_count == 1 else "s"))
+        for i in xrange(bitslip_count):
+            self.bitslip(channel, bit)
+        return bitslip_count
+    '''
     
     def delay(self, channel, bit, value):
         val = bf(0)
@@ -628,6 +677,9 @@ class GLITC:
         val[22:20] = channel
         val[31] = 1
         self.write(self.map['DPIDELAY'], int(val))
+        val = bf(self.read(self.map['DPIDELAY']))
+        while val[15]:
+            val = bf(self.read(self.map['DPIDELAY']))
 	    
     def bitslip(self, channel, bit):
         val = bf(self.read(self.map['DPTRAINING']))
@@ -635,6 +687,9 @@ class GLITC:
         val[19:16] = bit
         val[30] = 1
         self.write(self.map['DPTRAINING'], int(val))
+        val = bf(self.read(self.map['DPIDELAY']))
+        while val[15]:
+            val = bf(self.read(self.map['DPIDELAY']))
         
     def rdac(self, ritc, channel, value = None):
         if ritc > 1:
@@ -661,8 +716,15 @@ class GLITC:
     def identify(self):
         ident = bf(self.read(self.map['ident']))
         ver = bf(self.read(self.map['ver']))
+        serno = bf(0)
+        self.write(self.map['SERIAL'], 0x80000000)
+        self.write(self.map['SERIAL'], 0x00000000)
+        for i in xrange(57):
+            serno[56-i] = self.read(self.map['SERIAL'])
+          
         print "Identification Register: %x (%c%c%c%c)" % (int(ident),ident[31:24],ident[23:16],ident[15:8],ident[7:0])
-        print "Version Register: %d.%d.%d compiled %d/%d" % (ver[15:12], ver[11:8], ver[7:0], ver[28:24], ver[23:16])
+        print "Version Register: %d.%d.%d compiled %d/%d boardrev %d" % (ver[15:12], ver[11:8], ver[7:0], ver[27:24], ver[23:16], ver[31:28] + 1)
+        print "Serial Number: %15.15x" % int(serno)
 
     def read(self, addr):
         return self.dev.read(addr + self.base)
@@ -714,7 +776,7 @@ class GLITC:
             time.sleep(0.01)
             self.rdac(RITC,i,reset_value)
             
-	def read_all_samples(self, channel,wait_time=0.01):
+    def read_all_samples(self, channel,wait_time=0.01):
 	    sample_values = np.zeros(32)	    
 	    for sample_i in range(0,32):
 		    sample_values[sample_i]=self.train_read(channel, sample_i, 1)
@@ -734,6 +796,273 @@ class GLITC:
 	    sample_value /=float(num_trials)
 	    return sample_value
 
+    def autotrain_all_from_mem(self):
+        for i in xrange(6):
+            self.autotrain_from_mem(i, 0)
+
+    def autotrain_from_mem(self, channel, verbose=1):
+        # upper RITCs get mapped to delay channels 4, 5, 6
+        if channel > 2:
+            delaych = channel + 1
+        else:
+            delaych = channel
+        # step 1, reset the storage system and disable all
+        # triggers except soft trigger.
+        self.write(self.map['STORCTL'], 0x08)
+        # Now literally cycle through all of the IDELAY taps for
+        # these inputs.
+        full_train = [None]*32
+        for i in xrange(32):
+            # broadcast delay update
+            self.delay(delaych, 13, i)
+            # now fetch the full training pattern for this channel
+            full_train[i] = self.train_read_from_mem(channel)
+        # OK, now we actually have a *full* training pattern
+        # matrix: all 12 input lines, with all 32 IDELAY taps.
+        # We need to search through those IDELAY taps to locate the eye center.
+        for i in xrange(12):
+            old_train = 0
+            stable_count = 0
+            eye_start = 0
+            eye_stop = 0
+            found_eye_start = 0
+            looking_for_stop = 0
+            train_in_eye = 0            
+            middle_of_eye = 0
+            for j in xrange(32):
+                new_train = int(full_train[j][i])
+                if j==0:
+                    old_train = new_train
+                else:
+                    if new_train == old_train:
+                        stable_count = stable_count + 1
+                        if stable_count > 9:
+                            if found_eye_start == 0:
+                                eye_start = j-stable_count
+                                found_eye_start = 1
+                                train_in_eye = new_train
+                    else:
+                        stable_count = 0
+                        if found_eye_start == 1:
+                            eye_stop = j
+                            break
+                old_train = new_train
+            middle_of_eye = eye_start + (eye_stop - eye_start)/2
+            if verbose == 1:
+                print "Ch%2.2d Bit %2.2d Eye scan: (%2.2d - %2.2d) [%2.2X]" % (channel, i, eye_start, eye_stop, train_in_eye)                
+                print "Ch%2.2d Bit %2.2d Setting delay to %d" % (channel, i, middle_of_eye)
+            self.delay(delaych, i, middle_of_eye)
+        return
+                
+    def train_read_from_mem(self, channel):
+        # trigger
+        self.write(self.map['STORCTL'], 0x02)
+        val = bf(self.read(self.map['STORCTL']))
+        # read
+        while not val[0]:
+            val = bf(self.read(self.map['STORCTL']))
+    
+        # update the read pointer
+        self.write(self.map['SAMPDATA']+0x200*channel*4, 0)
+        # now I can read from that address
+        a0 = bf(self.read(self.map['SAMPDATA']+0x200*channel*4))
+        a1 = bf(self.read(self.map['SAMPDATA']+0x200*channel*4))
+        a2 = bf(self.read(self.map['SAMPDATA']+0x200*channel*4))
+        a3 = bf(self.read(self.map['SAMPDATA']+0x200*channel*4))
+        # clear
+        self.write(self.map['STORCTL'], 0x04)
+        
+        train = [None]*12
+        for i in xrange(12):
+            train_tmp = bf(0)
+            train_tmp[0] = a0[0+i]
+            train_tmp[1] = a0[12+i]
+            train_tmp[2] = a1[0+i]
+            train_tmp[3] = a1[12+i]
+            train_tmp[4] = a2[0+i]
+            train_tmp[5] = a2[12+i]
+            train_tmp[6] = a3[0+i]
+            train_tmp[7] = a3[12+i]
+            train[i] = train_tmp
+        
+        return train
+        
+    
+    # Initialize the interconnect between this GLITC and its
+    # upstream partner.
+    # What this does:
+    # Reset ISERDES[up] for me and ISERDES[down] for gup
+    # Place OSERDES[up] for me and OSERDES[down] for gup in training mode, and
+    #   disable input training complete.
+    # Reset OSERDES[up] for me and OSERDES[down] for gup
+    # Clock enable OSERDES[up] for me and OSERDES[down] for gup
+    # Set bitslips/nominal delays for these paths (up for me, down for gup)
+    #
+    # Then:
+    # *) Read GITRAINDOWN for gup. If it's not EB7ED, then issue realign for
+    #    gup (write 0x10 to 'control'). Reread. If it's now not EB7ED, throw an error.
+    # *) Read GITRAINUP for me. If it's not EB7ED, throw an error.
+    # *) Set input training done[up] for me, and input training done[down] for gup
+    # *) Send sync[up] for me.
+    # *) Send echo[up] for me, and check latency.
+    # *) Send echo[down] for gup, and check latency.
+    #
+    # Note that OFFBOARD initialization is done via a different function.
+    def onboard_intercom_initialize(self, gup):
+        myctl0 = bf(self.read(self.map['GICTRL0']))
+        upctl0 = bf(gup.read(gup.map['GICTRL0']))
+        myctl1 = bf(self.read(self.map['GICTRL1']))
+        upctl1 = bf(gup.read(gup.map['GICTRL1']))
+
+        # Put everything into a known state.
+        # Disable input buffer.
+        # Disable clock enable.
+        # Disable correlation enable.
+        # Training mode off.
+        # Training mode incomplete.
+        # Reset status.
+        myctl0[15:0] = 0x4
+        myctl1[15:0] = 0x1000
+        upctl0[31:16] = 0x4
+        upctl1[31:16] = 0x1000
+        self.write(self.map['GICTRL0'], int(myctl0))
+        self.write(self.map['GICTRL1'], int(myctl1))
+        gup.write(gup.map['GICTRL0'], int(upctl0))
+        gup.write(gup.map['GICTRL1'], int(upctl1))
+
+        print "GICTRL0 at reset: %8.8x" % self.read(self.map['GICTRL0'])
+        print "GICTRL0 on UP GLITC at reset: %8.8x" % gup.read(gup.map['GICTRL0'])
+        
+        # Reset ISERDES up for me, enable input buffer
+        myctl0[15:0] = 0x0001
+        # Reset ISERDES down for gup, enable input buffer
+        upctl0[31:16] = 0x0001
+        self.write(self.map['GICTRL0'], int(myctl0))
+        gup.write(gup.map['GICTRL0'], int(upctl0))
+        
+        # Put my OSERDES up into training mode
+        myctl1[15:0] = 0x0004
+        # Put gup OSERDES down into training mode
+        upctl1[31:16] = 0x0004        
+        self.write(self.map['GICTRL1'], int(myctl1))
+        gup.write(gup.map['GICTRL1'], int(upctl1))
+
+        # Reset OSERDES up for me.
+        myctl0[15:0] = 0x0002
+        # and reset OSERDES down for gup
+        upctl0[31:16] = 0x0002
+        self.write(self.map['GICTRL0'], int(myctl0))
+        gup.write(gup.map['GICTRL0'], int(upctl0))
+
+        # Now clock enable OSERDES up for me
+        myctl0[15:0] = 0x0008
+        # and down for gup
+        upctl0[31:16] = 0x0008
+        self.write(self.map['GICTRL0'], int(myctl0))
+        gup.write(gup.map['GICTRL0'], int(upctl0))
+
+        print "After reset: GICTRL0 %8.8x, GICTRL1 %8.8x" % (self.read(self.map['GICTRL0']), self.read(self.map['GICTRL1']))
+        print "UP after reset: GICTRL0 %8.8x, GICTRL1 %8.8x" % (gup.read(gup.map['GICTRL0']), gup.read(gup.map['GICTRL1']))
+        
+        # Now bitslip each of my 'up' ISERDESes 3 times.
+        # And bitslip each of gup's 'down' iserdeses 3 times
+        # set to nominal values
+        
+        # Note that you probably need a small delay after
+        # each 'delay' or bitslip write. Here printing the readback of the trains
+        # basically accomplishes that.        
+        for bit in xrange(5):
+            self.delay(3, bit, 24)
+            gup.delay(7, bit, 24)
+        print "GITRAINUP after idelay set: %8.8x" % self.read(self.map['GITRAINUP'])
+        print "UPs GITRAINDOWN after idelay set: %8.8x" % gup.read(gup.map['GITRAINDOWN'])
+        for i in xrange(3):
+            self.bitslip(3, 0)
+            self.bitslip(3, 1)
+            self.bitslip(3, 2)
+            self.bitslip(3, 3)
+            self.bitslip(3, 4)
+            gup.bitslip(7, 0)
+            gup.bitslip(7, 1)
+            gup.bitslip(7, 2)
+            gup.bitslip(7, 3)
+            gup.bitslip(7, 4)
+            print "GITRAINUP after bitslip: %8.8x" % self.read(self.map['GITRAINUP'])
+            print "UPs GITRAINDOWN after bitslip: %8.8x" % gup.read(gup.map['GITRAINDOWN'])
+        
+        # Now read the training pattern on gup's TRAINDOWN
+        train = bf(gup.read(gup.map['GITRAINDOWN']))
+        if (train[19:0] != 0xEB7ED):
+            print "UP path GLITC is out of alignment (%5.5x). Realigning." % train[19:0]
+            # Issue a clock shift.
+            gup.write(gup.map['CONTROL'], 0x10)
+            time.sleep(0.001)
+            train = bf(gup.read(gup.map['GITRAINDOWN']))
+            if (train[19:0] != 0xEB7ED):
+                print "UP path GLITC is still out of alignment! Initialization failed."
+                return
+            else:
+                print "UP path GLITC is now clock-aligned."
+
+        # Set input training done and disable output training mode.
+        myctl1[15:0] = 0x2
+        upctl1[31:16] = 0x2
+        self.write(self.map['GICTRL1'], int(myctl1))
+        gup.write(gup.map['GICTRL1'], int(upctl1))
+        ctl = bf(gup.read(gup.map['GICTRL1']))
+        print "UP path GICTRL1 before sync: %4.4x" % ctl[31:16]
+        # Send SYNC.
+        myctl1[3] = 1
+        self.write(self.map['GICTRL1'], int(myctl1))
+        ctl = bf(gup.read(gup.map['GICTRL1']))
+        print "UP path GICTRL1 after sync: %4.4x" % ctl[31:16]
+        # Now send an echo to up.
+        myctl1[15:0] = 0x42
+        self.write(self.map['GICTRL1'], int(myctl1))
+        ctl = bf(self.read(self.map['GICTRL1']))
+        toUpLatency = ctl[11:8]
+        print "Latency to UP echo response: %d" % toUpLatency
+        print "Base latency: %d" % ctl[15:12]
+        # Now send an echo from up
+        upctl1[31:16] = 0x42
+        gup.write(gup.map['GICTRL1'], int(upctl1))
+        ctl = bf(gup.read(gup.map['GICTRL1']))
+        fromUpLatency = ctl[27:24]
+        print "Latency from UP echo response: %d" % fromUpLatency
+        if toUpLatency != fromUpLatency:
+            print "Echo latencies don't match! Problem with intercom initialization."
+            return
+        print "On-board intercom initialized."
+        
+    def soft_trigger(self):
+        val = bf(self.read(self.map['STORCTL']))
+        val[1] = 1
+        self.write(self.map['STORCTL'], int(val))
+        
+        
+    def trigger_read(self,timeout=1000):
+        val = bf(self.read(self.map['STORCTL']))
+        count = 0
+        while not val[0]:
+            val = bf(self.read(self.map['STORCTL']))
+            count = count + 1
+            if timeout and count > timeout:
+                print "Timeout waiting for STORCTL data ready"
+                return None
+            
+        # now trigger is ready
+        # prep data
+        data = [None]*3072
+        for i in xrange(3072):
+            data[i] = self.read(self.map['SAMPDATA'])
+        
+        # now clear trigger
+        val[2] = 1
+        self.write(self.map['STORCTL'], int(val))
+        return data
+            
+        
+'''		
 class SPI:
     map = { 'SPCR'       : 0x000000,
             'SPSR'       : 0x000004,
@@ -799,6 +1128,7 @@ class SPI:
         data_in.append(address & 0xFF)
         res = self.command(device, self.cmd['READ'], 0, length, data_in)
         return res        
+'''
         
 class TISC(ocpci.Device):
     map = { 'ident'      : 0x000000,
@@ -857,6 +1187,9 @@ class TISC(ocpci.Device):
         ver = bf(self.read(self.map['ver']))
         print "Identification Register: %x (%c%c%c%c)" % (int(ident),ident[31:24],ident[23:16],ident[15:8],ident[7:0])
         print "Version Register: %d.%d.%d compiled %d/%d" % (ver[15:12], ver[11:8], ver[7:0], ver[28:24], ver[23:16])
+
+		def glitcs(self):
+        return [self.GA, self.GB, self.GC, self.GD]
         
     def gprogram(self, glitc, path):
         if glitc > 3 or glitc < 0:
