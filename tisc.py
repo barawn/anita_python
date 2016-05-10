@@ -620,11 +620,11 @@ class GLITC:
 	#Needs to be tested
     def scaler_read_all(self,channel,num_trials=1,wait=100):
         value_array = [0]*32
-		value_array_temp = [0]*32
-		for trial_i in range(num_trials):
-		    for sample_i in range(32):
+        value_array_temp = [0]*32
+        for trial_i in range(num_trials):
+            for sample_i in range(32):
                 value_array_temp[sample_i] = self.scaler_read(channel,sample_i, True)
-				value_array[sample_i] += value_array_temp[sample_i]
+                value_array[sample_i] += value_array_temp[sample_i]
 		value_array /= (1024.0*num_trials)
         return value_array
 
@@ -1188,7 +1188,7 @@ class TISC(ocpci.Device):
         print "Identification Register: %x (%c%c%c%c)" % (int(ident),ident[31:24],ident[23:16],ident[15:8],ident[7:0])
         print "Version Register: %d.%d.%d compiled %d/%d" % (ver[15:12], ver[11:8], ver[7:0], ver[28:24], ver[23:16])
 
-		def glitcs(self):
+    def glitcs(self):
         return [self.GA, self.GB, self.GC, self.GD]
         
     def gprogram(self, glitc, path):
