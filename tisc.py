@@ -578,10 +578,10 @@ class GLITC:
             print "Ch%2.2d Bit %2.2d Eye scan: (%2.2d - %2.2d) [%2.2X]" % (channel, bit, eye_start, eye_stop, train_in_eye)
         return (eye_start, eye_stop, train_in_eye)		
 
-    '''
+    
     #Thi was the old scaler read function, 
 	#updated function below, but lacking num_tirals and wait functionallity	
-    def scaler_read(self,channel,sample,num_trials=1,wait=100):
+    def scaler_read_old(self,channel,sample,num_trials=1,wait=100):
         val = 0
         for trail_i in range(num_trials):
             v = self.train_read(channel, sample, sample_view=1)
@@ -593,7 +593,7 @@ class GLITC:
                 
         val /=(1023.0*num_trials)
         return val#[15:0]
-    '''
+    
     def scaler_read(self, channel, sample, dontreset=False):
         val = bf(self.read(self.map['DPTRAINING']))
         # this part is complicated
@@ -613,9 +613,9 @@ class GLITC:
             
         rdval = bf(self.read(self.map['DPSCALER']))
         if bfsamp[0]:
-            return rdval[11:0]
+            return int(rdval[11:0])/1024.0
         else:
-            return rdval[27:16]
+            return int(rdval[27:16])/1024.0
 			
 	#Needs to be tested
     def scaler_read_all(self,channel,num_trials=1,wait=100):
@@ -625,7 +625,8 @@ class GLITC:
             for sample_i in range(32):
                 value_array_temp[sample_i] = self.scaler_read(channel,sample_i, True)
                 value_array[sample_i] += value_array_temp[sample_i]
-		value_array /= (1024.0*num_trials)
+        for i in range(32):
+            value_array[i] /= (num_trials)
         return value_array
 
     '''
