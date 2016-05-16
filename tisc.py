@@ -579,9 +579,9 @@ class GLITC:
         return (eye_start, eye_stop, train_in_eye)		
 
     
-    #Thi was the old scaler read function, 
+    #This was the old scaler read function, 
 	#updated function below, but lacking num_tirals and wait functionallity	
-    def scaler_read_old(self,channel,sample,num_trials=1,wait=100):
+    """def scaler_read_old(self,channel,sample,num_trials=1,wait=100):
         val = 0
         for trail_i in range(num_trials):
             v = self.train_read(channel, sample, sample_view=1)
@@ -592,8 +592,9 @@ class GLITC:
                     break
                 
         val /=(1023.0*num_trials)
-        return val#[15:0]
+        return val#[15:0] """
     
+    #channel values are 0,1,2,4,5,6
     def scaler_read(self, channel, sample, dontreset=False):
         val = bf(self.read(self.map['DPTRAINING']))
         # this part is complicated
@@ -613,11 +614,18 @@ class GLITC:
             
         rdval = bf(self.read(self.map['DPSCALER']))
         if bfsamp[0]:
-            return int(rdval[11:0])/1024.0
+            return int(rdval[11:0])/512.0
         else:
-            return int(rdval[27:16])/1024.0
-			
-	#Needs to be tested
+            return int(rdval[27:16])/512.0
+	
+    def scaler_read_n(self,channel,sample,num_trials=1):
+        val = 0
+        for trial_i in range(num_trials):
+            #time.sleep(0.01)
+            val += self.scaler_read(channel,sample)
+        val /= num_trials
+        return val
+
     def scaler_read_all(self,channel,num_trials=1,wait=100):
         value_array = [0]*32
         value_array_temp = [0]*32
@@ -798,15 +806,17 @@ class GLITC:
 	    return sample_value
 
     def autotrain_all_from_mem(self):
-        for i in xrange(6):
+        for i in range(6):
             self.autotrain_from_mem(i, 0)
 
     def autotrain_from_mem(self, channel, verbose=1):
         # upper RITCs get mapped to delay channels 4, 5, 6
+        
         if channel > 2:
             delaych = channel + 1
         else:
             delaych = channel
+        
         # step 1, reset the storage system and disable all
         # triggers except soft trigger.
         self.write(self.map['STORCTL'], 0x08)
