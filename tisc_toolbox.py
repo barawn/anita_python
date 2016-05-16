@@ -17,7 +17,7 @@ import os
 #note, as the dictionaries are stored in the TISC# subfolders of data,
 #if you want to switch to a different board you will need to change the 
 #TISC variable, save, and reload tisc_toolbox in python
-TISC = 10005
+TISC = 20001
 import imp
 #If these dictionaries dont exist yet, these lines need to be commented out untill they are created.
 if os.path.isfile('/home/user/data/TISC%d/TISC_VSS_VDD_setting_dictionary.py'%TISC):
@@ -72,9 +72,9 @@ def setup(GLITC_n,wait_time=0.01):
 	sleep(wait_time)
 	GLITC.rdac(1,32,VDD)
 	sleep(wait_time)
-	GLITC.training_ctrl(1)
+	GLITC.training_ctrl(1)  #This might be redundent now?
 	sleep(wait_time)
-	GLITC.eye_autotune_all()
+	GLITC.autotrain_all_from_mem()
 	sleep(wait_time)
 	GLITC.training_ctrl(0)
 	sleep(wait_time)
@@ -165,7 +165,7 @@ def find_bit_transition(GLITC,GLITC_n,channel,RITC,RITC_COMP,transition_value,th
 		#print sample_number
 		# Read in and average values (may need to change to look at only one sample)
 		#sample_value = read_sample_n(GLITC,channel, sample_number, num_trials)/float(threshold_label)
-		sample_value = GLITC.scaler_read(channel,sample_number,num_trials)-threshold_label+1
+		sample_value = GLITC.scaler_read_n(channel,sample_number,num_trials)-threshold_label+1
 		#print threshold_label-1
 		#print sample_value
 		
@@ -403,7 +403,7 @@ def find_bit_transition_all_samples(GLITC,GLITC_n,channel,RITC,RITC_COMP,transit
 			print "Sample # %d = %1.2f, Found transition point at %1.1d (%1.2fmV)" % (sample_number,sample_transition_value,input_dac_transition_value, input_dac_transition_value*2500./4095.)
 			
 		
-	make_scatter_plot(pp,graph_1_x,graph_1_y,GLITC_n,channel,threshold_label,transition_value,input_dac_transition_value,0,sample_number,0)
+	#make_scatter_plot(pp,graph_1_x,graph_1_y,GLITC_n,channel,threshold_label,transition_value,input_dac_transition_value,0,sample_number,0)
 	
 	return input_dac_transition_value,sample_transition_value,sample_number
 
@@ -411,6 +411,9 @@ def find_bit_transition_all_samples(GLITC,GLITC_n,channel,RITC,RITC_COMP,transit
 def make_scatter_plot(pp,x,y,GLITC_n,channel,threshold_label,transition_value,pedestal,offset,sample_number,flag):
 	plt.figure(figsize=(16,12))	
 	plt.scatter(x,y)
+	trans_i = x.index(transition_value) #should always be at 300, but we will leave this in anyway
+	#print trans_i
+	plt.scatter(x[trans_i-1:trans_i+1],y[trans_i-1:trans_i+1],color='red') 
 	if(flag==1):
 		plt.title("GLITC "+str(GLITC_n)+", Ch "+str(channel)+", Threshold "+str(threshold_label)+", Transition "+str(transition_value)+', Sample Number '+str(sample_number))
 		plt.xlabel("Threshold Voltage (DAC Counts)")
@@ -494,7 +497,7 @@ def find_slope_offset(GLITC,channel,threshold_label,sample_number,transition_poi
 				sample_before = 0.0
 				
 				
-				sample_before=GLITC.scaler_read(channel,sample_number,num_trials)-threshold_label+1
+				sample_before=GLITC.scaler_read_n(channel,sample_number,num_trials)-threshold_label+1
 
 				#print "sample at: %1.2f" % sample_at
 				#print "sample before: %1.2f" % sample_before
@@ -546,7 +549,7 @@ def find_slope_offset(GLITC,channel,threshold_label,sample_number,transition_poi
 					sample_after[j+1] = 0
 					#print slope_counter
 					
-					sample_after[j+1]=GLITC.scaler_read(channel,sample_number,num_trials)-threshold_label+1
+					sample_after[j+1]=GLITC.scaler_read_n(channel,sample_number,num_trials)-threshold_label+1
 					
 					#print "sample at: %1.2f" % sample_at
 					#print "sample after: %1.2f" % sample_after[j+1]
@@ -610,7 +613,7 @@ def find_overlay_offset(GLITC,channel,threshold_label,sample_number,transition_p
 		sleep(0.01)
 		
 
-		sample_temp = GLITC.scaler_read(channel,sample_number,num_trials)-threshold_label+1
+		sample_temp = GLITC.scaler_read_n(channel,sample_number,num_trials)-threshold_label+1
 
 		sample_array.append(sample_temp)
 		threshold_array.append(thres_i)
@@ -648,7 +651,14 @@ def find_overlay_offset(GLITC,channel,threshold_label,sample_number,transition_p
 	sample_at = sample_array[scan_width-1]
 	
 	while (inside_flag):
-		sample_before = sample_array[scan_width-1-slope_counter]
+		if (scan_width-1-slope_counter > 0):
+			sample_before = sample_array[scan_width-1-slope_counter]
+		else:
+			inside_flag = False 
+			if (slope_counter == 1):
+				delta_minus += (sample_at-sample_before)
+				if (delta_minus == 0):
+					delta_minus = 0.000000001
 		#print "sample at: %1.2f" % sample_at
 		#print "sample before: %1.2f" % sample_before
 		#print threshold_label
@@ -730,7 +740,7 @@ def transition_threshold_scan(GLITC,GLITC_n,channel,RITC,RITC_COMP,input_dac_tra
 
 		sample_value = 0.0
 		# Read in samples and check if it passes the sample transition point
-		sample_value = GLITC.scaler_read(channel,sample_number,num_trials)
+		sample_value = GLITC.scaler_read_n(channel,sample_number,num_trials)
 		
 		"""
 		if(sample_value>=0.4 and sample_value<=0.6 and inside_flag!=1):
@@ -812,7 +822,7 @@ def vss_scan(GLITC_n,channel,input_dac_transition_value=800,num_scans=4,vss_min=
 			sample_value = 0.0
 			# Read in samples and check if it passes the sample transition point
 
-			sample_value = GLITC.scaler_read(channel,sample_number,num_trials)
+			sample_value = GLITC.scaler_read_n(channel,sample_number,num_trials)
 
 			
 			threshold_array.append(thres_i)
@@ -884,7 +894,7 @@ def vdd_scan(GLITC_n,channel,input_dac_transition_value=800,num_scans=4,vdd_min=
 
 			sample_value = 0.0
 			# Read in samples and check if it passes the sample transition point
-			sample_value = GLITC.scaler_read(channel,sample_number,num_trials)
+			sample_value = GLITC.scaler_read_n(channel,sample_number,num_trials)
 
 			
 			threshold_array.append(thres_i)
@@ -1370,11 +1380,11 @@ def find_threshold_offsets():
 	transition_values = [2048,1024,1536,1792]
 	
 	sample_number = 0
-	for GLITC_n in range(4):
+	for GLITC_n in range(0,4):
 
 		GLITC = setup(GLITC_n)
 		
-		for channel in range(7):
+		for channel in range(0,7):
 			if (channel ==3):
 				continue
 
@@ -1504,9 +1514,9 @@ def threshold_transition_scanner():
 
 	input_midpoint = 760
 
-	file_iterator = "3"
+	file_iterator = ""
 
-	for GLITC_i in range(2):
+	for GLITC_i in range(4):
 		
 		GLITC = setup(GLITC_i)
 		
@@ -1531,7 +1541,7 @@ def threshold_transition_scanner():
 				
 				# Set higher threshold to maximum
 				for threshold_level_ii in range(0,threshold_level_i):
-					print "Setting comparator %d to max" % (RITC_COMP-threshold_level_ii-1)
+					#print "Setting comparator %d to max" % (RITC_COMP-threshold_level_ii-1)
 					GLITC.rdac(RITC,RITC_COMP-threshold_level_ii-1,4095)
 							
 				with open('/home/user/data/TISC%d/GLITC_%d/threshold_study/G%d_Ch%d_Th%d_%s.dat'%(TISC,GLITC_i,GLITC_i,channel_i,threshold_label,file_iterator),'wb') as f:
@@ -1555,7 +1565,7 @@ def threshold_transition_scanner():
 		
 							print "Setting input DAC to %d (%1.2f mV)" % (input_dac_i,input_dac_i*2500./4095.)
 							GLITC.dac(channel_i,input_dac_i)
-							sleep(5)
+							sleep(1)#should be 5? might be okay if its less
 							
 							print "Starting threshold scan"
 							sample_array,threshold_array = threshold_scan_all_samples(GLITC,GLITC_i,channel_i,threshold_label,num_trials,min_threshold_range,max_threshold_range,threshold_step)
@@ -1572,15 +1582,17 @@ def threshold_transition_scanner():
 						
 							transition_point = [0]*32
 							plt.figure(figsize=(16,12))
-							print "Making threshold plots"
+							#print "Making threshold plots"
 							for sample_i in range(32):
 								
-								plt.plot(threshold_array,sample_array[sample_i],color=next(colors),label=("Sample %d"%sample_i))
+								#if not ((sample_i+2)/4.).is_integer():
 								
-								for i in range(len(sample_array[sample_i])):	
-									if(sample_array[sample_i][i]<threshold_label-0.5):
-										transition_point[sample_i] = threshold_array[i]
-										break
+									plt.plot(threshold_array,sample_array[sample_i],color=next(colors),label=("Sample %d"%sample_i))
+								
+									for i in range(len(sample_array[sample_i])):	
+										if(sample_array[sample_i][i]<threshold_label-0.5):
+											transition_point[sample_i] = threshold_array[i]
+											break
 						
 							#remove samples that are never good, but also samples that went bad...
 							#this is just to help with fitting the transition_point array 
@@ -1611,7 +1623,7 @@ def threshold_transition_scanner():
 							plt.close()
 						
 							plt.figure(figsize=(16,12))
-							print "Making histograms"
+							#print "Making histograms"
 							bin_range = [min_threshold_range,max_threshold_range]
 							bin_width = 2*threshold_step
 							bin_num = int((bin_range[1]-bin_range[0])/bin_width)
@@ -1677,7 +1689,7 @@ def threshold_transition_scanner():
 			sigma_array = np.trim_zeros(sigma_array)
 			input_array = np.trim_zeros(input_array)
 			counter_array = np.trim_zeros(counter_array)
-			#but trim doesn't tke care of non-edge zeros, we need those gone too.
+			#but trim doesn't take care of non-edge zeros, we need those gone too.
 			zero_index_array = []
 			for i in range(len(mean_array)):
 				if counter_array[i] == 0:
@@ -1702,7 +1714,7 @@ def threshold_transition_scanner():
 			print "GLITC %d, Channel %d Fit Parameters" % (GLITC_i,channel_i)
 			print "Fit "+str(mean_fit)
 			
-			#force symmetry around working rane midpoint
+			#force symmetry around working range midpoint
 			if(working_range_end-input_midpoint<=input_midpoint-working_range_start):
 				delta_working_range = working_range_end-input_midpoint
 				working_input_range = np.linspace(input_midpoint-delta_working_range,working_range_end,7)
@@ -1871,7 +1883,7 @@ def threshold_scan(GLITC,GLITC_n,channel,threshold_label,sample_number,num_trial
 		GLITC.rdac(RITC,RITC_COMP,thres_i)
 		sleep(wait_time)
 		
-		sample_value = GLITC.scaler_read(channel,sample_number,num_trials)
+		sample_value = GLITC.scaler_read_n(channel,sample_number,num_trials)
 		sample_value_array.append(sample_value)
 
 	return sample_value_array,threshold_array
@@ -2323,8 +2335,8 @@ def pedestal_vs_sample_scan_individual_correction_all():
 		for channel_i in range(7):
 			if channel_i == 3:
 				continue
-			if GLITC_i == 0 and channel_i == 0:
-				continue
+			#if GLITC_i != 0 and channel_i != 0:
+			#	continue
 			#take the data from the files, and make plots.
 			pedestal_vs_sample_scan_individual_correction(GLITC_i,channel_i)
 	
@@ -2580,7 +2592,7 @@ def make_threshold_offset_dictionary(TISC_n=TISC):
 	dict.write('	offset_dict = {}\n\n')
 	dict.write('	# Syntax (TISC_Number,GLITC_Number,Channel_Number,RITC_DAC_Number,Transition_Point) = offset \n\n\n')
 
-	for GLITC_i in range(2):
+	for GLITC_i in range(4):
 		
 		dict.write('	#------------------------------------------------------- \n')
 		dict.write('	#----------------------GLITC %d-------------------------- \n'%(GLITC_i))
@@ -2648,7 +2660,7 @@ def make_threshold_setting_dictionary(TISC_n=TISC):
 	dict.write('	thresh_dict = {}\n\n')
 	dict.write('	# Syntax (TISC_Number,GLITC_Number,Channel_Number,RITC_DAC_Number) = transition_setting \n\n\n')
 
-	for GLITC_i in range(2):
+	for GLITC_i in range(4):
 		
 		dict.write('	#------------------------------------------------------- \n')
 		dict.write('	#----------------------GLITC %d-------------------------- \n'%(GLITC_i))
@@ -3766,6 +3778,297 @@ def run_individual_sample_correction_study():
 			set_thresholds(GLITC,GLITC_n,ch_i)
 			
 			pedestal_vs_sample_scan(GLITC,GLITC_n,ch_i)
+	
+	return None
+
+def hist_threshold_offset_settings(which_n=0):
+
+	#hard input which two files to compare
+	tod_a = imp.load_source('tod_a', '/home/user/data/TISC20001/TISC_threshold_offset_dictionary.py')
+	
+	TISC_here = 20001
+	
+	tod2048=[]
+	tod1024=[]
+	tod512 =[]
+	tod256 =[]
+	todall =[]
+	
+	for GLITC_i in range(2):
+		for ch_i in range(7):
+			if ch_i == 3:
+				continue
+			for thresh_label_i in range(1,8):
+				RITC, RITC_COMP = get_channel_info(ch_i,thresh_label_i)
+				tod2048.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[0])
+				tod1024.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[1])
+				tod512.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[2])
+				tod256.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[3])
+	todall = tod2048+tod1024+tod512+tod256
+	#print todall
+	
+	plt.figure(figsize=[16,12])
+
+	plt.suptitle("Histogram of All bit Transition offsets")
+	
+	gs = gridspec.GridSpec(2,2)
+	ax1 = plt.subplot(gs[0,0])
+	ax2 = plt.subplot(gs[0,1])
+	ax3 = plt.subplot(gs[-1,0])
+	ax4 = plt.subplot(gs[-1,1])
+	bin1 = np.linspace(-40,40,80)
+	bin2 = np.linspace(-40,40,80)
+	bin3 = np.linspace(-40,40,80)
+	bin4 = np.linspace(-40,40,80)
+
+
+	(mu1, sigma1) = norm.fit(tod2048)
+	ax1.hist(tod2048, 20, facecolor='green',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu1,sigma1))
+	ax1.axvline(mu1, ls = '--', color='green')
+	ax1.axvline(tod2048[which_n], color='green')
+	ax1.set_title("2048 bit transition setting differences")
+	ax1.set_ylim(0,30)
+	ax1.set_xlabel("Difference [dac counts]")
+	ax1.set_ylabel("Counts")
+	ax1.legend()
+	(mu2, sigma2) = norm.fit(tod1024)
+	ax2.hist(tod1024, 20, facecolor='blue',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu2,sigma2))
+	ax2.axvline(mu2, ls = '--', color='blue')
+	ax2.axvline(tod1024[which_n], color='blue')
+	ax2.set_title("1024 bit transition setting differences")
+	ax2.set_ylim(0,30)
+	ax2.set_xlabel("Difference [dac counts]")
+	ax2.set_ylabel("Counts")
+	ax2.legend()
+	(mu3, sigma3) = norm.fit(tod512)
+	ax3.hist(tod512, 20, facecolor='red',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu3,sigma3))
+	ax3.axvline(mu3, ls = '--', color='red')
+	ax3.axvline(tod512[which_n], color='red')
+	ax3.set_title("512 bit transition setting differences")
+	ax3.set_ylim(0,30)
+	ax3.set_xlabel("Difference [dac counts]")
+	ax3.set_ylabel("Counts")
+	ax3.legend()
+	(mu4, sigma4) = norm.fit(tod256)
+	ax4.hist(tod256, 20, facecolor='m',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu4,sigma4))
+	ax4.axvline(mu4, ls = '--', color='m')
+	ax4.axvline(tod256[which_n], color='m')
+	ax4.set_title("256 bit transition setting differences")
+	ax4.set_ylim(0,30)
+	ax4.set_xlabel("Difference [dac counts]")
+	ax4.set_ylabel("Counts")
+	ax4.legend()
+	#plt.grid(True)
+	#plt.savefig(("/home/user/data/TISC%d_23C/bit_transition_offset_comparison_8C_vs_23C.png" % (TISC)))
+	plt.show()
+	#plt.clf()
+	plt.close()
+	
+	return None
+	
+	
+def compare_threshold_offset_setting():
+
+	#hard input which two files to compare
+	tod_a = imp.load_source('tod_a', '/home/user/data/TISC10005_23C/TISC_threshold_offset_dictionary.py')
+	tod_b = imp.load_source('tod_b', '/home/user/data/TISC10005/TISC_threshold_offset_dictionary.py')
+	
+	TISC_here = 10005
+	
+	tod2048=[]
+	tod1024=[]
+	tod512 =[]
+	tod256 =[]
+	todall =[]
+	
+	for GLITC_i in range(2):
+		for ch_i in range(7):
+			if ch_i == 3:
+				continue
+			for thresh_label_i in range(1,8):
+				RITC, RITC_COMP = get_channel_info(ch_i,thresh_label_i)
+				tod2048.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[0]-tod_b.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[0])
+				tod1024.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[1]-tod_b.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[1])
+				tod512.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[2]-tod_b.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[2])
+				tod256.append(tod_a.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[3]-tod_b.get_offsets(TISC_here,GLITC_i,ch_i,RITC_COMP)[3])
+	todall = tod2048+tod1024+tod512+tod256
+	#print todall
+	
+	#now we want to make some histograms?...
+	plt.figure(figsize=[16,12])
+	(mu, sigma) = norm.fit(todall)
+	plt.hist(todall, 50, label = 'mu=%1.2f \nsigma=%1.2f'%(mu,sigma))
+	#plt.ylim((0,0.5))
+	plt.title("Histogram of Difference in All bit Transition offsets")
+	plt.xlabel("Difference [dac counts]")
+	plt.ylabel("Counts")
+	plt.legend()
+	#plt.grid(True)
+	#plt.savefig(("" % ()))
+	plt.show()
+	#plt.clf()
+	plt.close()	
+
+	plt.figure(figsize=[16,12])
+
+	plt.suptitle("Histogram of Difference in All bit Transition offsets \nComparing 23C to 8C in chamber")
+	
+	gs = gridspec.GridSpec(2,2)
+	ax1 = plt.subplot(gs[0,0])
+	ax2 = plt.subplot(gs[0,1])
+	ax3 = plt.subplot(gs[-1,0])
+	ax4 = plt.subplot(gs[-1,1])
+	bins = np.linspace(-40,40,80)
+
+
+	(mu1, sigma1) = norm.fit(tod2048)
+	ax1.hist(tod2048, bins, facecolor='green',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu1,sigma1))
+	ax1.set_title("2048 bit transition setting differences")
+	ax1.set_ylim(0,30)
+	ax1.set_xlabel("Difference [dac counts]")
+	ax1.set_ylabel("Counts")
+	ax1.legend()
+	(mu2, sigma2) = norm.fit(tod1024)
+	ax2.hist(tod1024, bins, facecolor='blue',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu2,sigma2))
+	ax2.set_title("1024 bit transition setting differences")
+	ax2.set_ylim(0,30)
+	ax2.set_xlabel("Difference [dac counts]")
+	ax2.set_ylabel("Counts")
+	ax2.legend()
+	(mu3, sigma3) = norm.fit(tod512)
+	ax3.hist(tod512, bins, facecolor='red',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu3,sigma3))
+	ax3.set_title("512 bit transition setting differences")
+	ax3.set_ylim(0,30)
+	ax3.set_xlabel("Difference [dac counts]")
+	ax3.set_ylabel("Counts")
+	ax3.legend()
+	(mu4, sigma4) = norm.fit(tod256)
+	ax4.hist(tod256, bins, facecolor='yellow',alpha=0.80,label = 'mu=%1.2f \nsigma=%1.2f'%(mu4,sigma4))
+	ax4.set_title("256 bit transition setting differences")
+	ax4.set_ylim(0,30)
+	ax4.set_xlabel("Difference [dac counts]")
+	ax4.set_ylabel("Counts")
+	ax4.legend()
+	#plt.grid(True)
+	plt.savefig(("/home/user/data/TISC%d_23C/bit_transition_offset_comparison_8C_vs_23C.png" % (TISC)))
+	plt.show()
+	#plt.clf()
+	plt.close()
+	
+	return None
+	
+#makes hist of change in threshold setting, this might not be a smart way to do this....
+def compare_threshold_setting():
+
+	#hard input which two files to compare
+	tsd_a = imp.load_source('tsd_a', '/home/user/data/TISC10005_23C/TISC_threshold_setting_dictionary.py')
+	tsd_b = imp.load_source('tsd_b', '/home/user/data/TISC10005_8C/TISC_threshold_setting_dictionary.py')
+	
+	TISC_here = 10005
+	
+	tsd_spacing = []
+	tsd_mean = []
+	
+	for GLITC_i in range(2):
+		for ch_i in range(7):
+			if ch_i == 3:
+				continue
+			tsd_d_a = []
+			tsd_d_b = []
+			tsd_s_a = []
+			tsd_s_b = []
+			for thresh_label_i in range(1,8):
+				RITC, RITC_COMP = get_channel_info(ch_i,thresh_label_i)
+				tsd_d_a.append(tsd_a.get_threshold(TISC_here,GLITC_i,ch_i,RITC_COMP))
+				tsd_d_b.append(tsd_b.get_threshold(TISC_here,GLITC_i,ch_i,RITC_COMP))
+			tsd_mean_a = sum(tsd_d_a)/len(tsd_d_a)
+			tsd_mean_b = sum(tsd_d_b)/len(tsd_d_b)
+			tsd_mean.append(tsd_mean_a-tsd_mean_b)
+			for i in range(len(tsd_d_a)-1):
+				tsd_s_a.append(tsd_d_a[i+1]-tsd_d_a[i])
+				tsd_s_b.append(tsd_d_b[i+1]-tsd_d_b[i])
+			tsd_mean_spacing_a = sum(tsd_s_a)/len(tsd_s_a)
+			tsd_mean_spacing_b = sum(tsd_s_b)/len(tsd_s_b)
+			tsd_spacing.append(tsd_mean_spacing_a-tsd_mean_spacing_b)
+				
+
+	#print tsd_mean
+	#print tsd_spacing
+	
+	#now we want to make some histograms?...
+
+	plt.figure(figsize=[16,12])
+	
+	plt.suptitle("Comparing Threshold Settings of 23C to 8C in chamber") 
+	
+	gs = gridspec.GridSpec(1,2)
+	ax1 = plt.subplot(gs[0,0])
+	ax2 = plt.subplot(gs[0,1])
+	#ax3 = plt.subplot(gs[-1,0])
+	#ax4 = plt.subplot(gs[-1,1])
+
+
+	(mu1, sigma1) = norm.fit(tsd_mean)
+	ax1.hist(tsd_mean, 20, color='blue',label = 'mu=%1.2f \nsigma=%1.2f'%(mu1,sigma1))
+	ax1.set_title("Histogram of Difference in Middle Transition point")
+	ax1.set_xlabel("Difference [dac counts]")
+	ax1.set_ylabel("Counts")
+	ax1.legend()
+	(mu2, sigma2) = norm.fit(tsd_spacing)
+	ax2.hist(tsd_spacing, 20, color='red', label = 'mu=%1.2f \nsigma=%1.2f'%(mu2,sigma2))
+	ax2.set_title("Histogram of Difference in Transition Spacings")
+	ax2.set_xlabel("Difference [dac counts]")
+	ax2.set_ylabel("Counts")
+	ax2.legend()	
+	
+	plt.savefig(("/home/user/data/TISC%d_23C/threshold_setting_comparison_8C_vs_23C.png" % (TISC_here)))
+	plt.show()
+	#plt.clf()
+	plt.close()
+
+	
+	return None
+
+def compare_INL_corrections():
+
+	#hard input which two files to compare
+	INL_a = imp.load_source('INL_a', '/home/user/data/TISC10005_23C/TISC_INL_correction_dictionary.py')
+	INL_b = imp.load_source('INL_b', '/home/user/data/TISC10005_8C/TISC_INL_correction_dictionary.py')
+	
+	TISC_here = 10005
+	
+	INL_dif = []
+
+	
+	for GLITC_i in range(2):
+		for ch_i in range(7):
+			if ch_i == 3:
+				continue
+			for sample_i in range(32):
+				for thres_i in range(7):
+					INL_dif.append(INL_a.get_INL_correction(TISC_here,GLITC_i,ch_i,sample_i)[thres_i]-INL_b.get_INL_correction(TISC_here,GLITC_i,ch_i,sample_i)[thres_i])
+
+				
+
+	#print INL_dif
+	
+	#now we want to make some histograms?...
+	bins = np.linspace(-0.9375,0.9375,16)
+	#print bins
+	plt.figure(figsize=[16,12])
+	(mu, sigma) = norm.fit(INL_dif)
+	plt.hist(INL_dif, bins, label = 'mu=%1.4f \nsigma=%1.4f'%(mu,sigma))
+	#plt.ylim((0,0.5))
+	plt.title("Histogram of Difference in INL corrections \nComparing 23C to 8Cin chamber")
+	plt.xlabel("Difference [dac counts]")
+	plt.ylabel("Counts")
+	plt.legend()
+	#plt.grid(True)
+	plt.savefig(("/home/user/data/TISC%d_23C/INL_correction_comparison_8C_vs_23C.png" % (TISC_here)))
+	plt.show()
+	#plt.clf()
+	plt.close()
+	
 	
 	return None
 
