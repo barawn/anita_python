@@ -2,7 +2,7 @@ import struct
 import sys
 import time
 import hexfile
-from bf import * 
+from .bf import * 
 
 
 #
