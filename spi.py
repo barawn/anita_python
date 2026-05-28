@@ -59,7 +59,7 @@ class SPI:
         self.memory_type = res[1]
         self.memory_capacity = 2**res[2]        
         
-    def command(self, command, dummy_bytes, num_read_bytes, data_in = [] ):
+    def command(self, command, dummy_bytes, num_read_bytes, data_in = bytes()):
         self.dev.spi_cs(self.device, 1)
         self.dev.write(self.base + self.map['SPDR'], command)
         x = 0 
@@ -94,14 +94,14 @@ class SPI:
 
     def read(self, address, length):
         if self.memory_capacity > 2**24:
-            data_in = []
+            data_in = bytearray()
             data_in.append((address >> 24) & 0xFF)
             data_in.append((address >> 16) & 0xFF)
             data_in.append((address >> 8) & 0xFF)
             data_in.append(address & 0xFF)
             result = self.command(self.cmd['4READ'], 0, length, data_in)
         else:
-            data_in = []
+            data_in = bytearray()
             data_in.append((address >> 16) & 0xFF)
             data_in.append((address >> 8) & 0xFF)
             data_in.append(address & 0xFF)
@@ -144,11 +144,11 @@ class SPI:
         else:
             print("Don't know how to program flash with capacity %d" % self.memory_capacity)
             return
-        erase_sectors = [0]*(total_size/sector_size)
+        erase_sectors = [0]*int(total_size/sector_size)
         sector_list = []
         for seg in f.segments:
             print("Segment %s starts at %d" % (seg, seg.start_address))
-            start_sector = seg.start_address/sector_size
+            start_sector = int(seg.start_address/sector_size)
             print("This is sector %d" % start_sector)
             if erase_sectors[start_sector] == 0:
                 erase_sectors[start_sector] = 1
@@ -178,16 +178,17 @@ class SPI:
         self.write_disable()
         print("Complete!")
 
-    def page_program(self, address, data_write = []):
+    def page_program(self, address, data_write = bytearray()):
+        towrite = bytearray(data_write)
         self.write_enable()
-        data_write.insert(0,(address & 0xFF))
-        data_write.insert(0,((address>>8) & 0xFF))
-        data_write.insert(0,((address>>16) & 0xFF))
+        towrite.insert(0,(address & 0xFF))
+        towrite.insert(0,((address>>8) & 0xFF))
+        towrite.insert(0,((address>>16) & 0xFF))
         if self.memory_capacity > 2**24:
-            data_write.insert(0,((address>>24) & 0xFF))
-            self.command(self.cmd["4PP"],0,0,data_write)
+            towrite.insert(0,((address>>24) & 0xFF))
+            self.command(self.cmd["4PP"],0,0,towrite)
         else:
-            self.command(self.cmd["3PP"],0,0,data_write)
+            self.command(self.cmd["3PP"],0,0,towrite)
         res = self.status()
         trials = 0
         while trials < 10:
@@ -203,14 +204,14 @@ class SPI:
     def erase(self, address):
         self.write_enable()
         if self.memory_capacity > 2**24:
-            data = []
+            data = bytearray()
             data.append((address >> 24) & 0xFF)
             data.append((address >> 16) & 0xFF)
             data.append((address >> 8) & 0xFF)
             data.append((address & 0xFF))
             erase = self.command(self.cmd["4SE"], 0, 0, data)
         else:
-            data = []
+            data = bytearray()
             data.append((address>>16) & 0xFF)
             data.append((address>>8) & 0xFF)
             data.append((address & 0xFF))
@@ -232,7 +233,7 @@ class SPI:
     def write_bank_address(self, bank):
         if self.memory_capacity > 2**24:
             return
-        bank_write = self.command(self.cmd["BRWR"], 0, 0, [ bank ])
+        bank_write = self.command(self.cmd["BRWR"], 0, 0, bytes([ bank ]))
         return bank_write 	
 
     def read_bank_address(self):
